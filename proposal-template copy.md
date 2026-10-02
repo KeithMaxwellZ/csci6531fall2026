@@ -6,6 +6,7 @@
 |---|---|---|---|
 | First Last | G12345678 | name@gwu.edu | Security Architect |
 | First Last | G12345679 | name@gwu.edu | Security Engineer |
+| First Last | G12345679 | name@gwu.edu | Security Auditor |
 
 **Application:** #4 Encrypted Messenger
 
@@ -32,7 +33,7 @@ The application provides end-to-end confidentiality and integrity with XChaCha20
 |---|---|---|---|
 | 1 | Oct 2–9 | Submit proposal; scaffold the client, relay, account store, and threat model. | Security Architect |
 | 2 | Oct 9–16 | Implement account registration, Argon2 password hashing, TLS login, sessions, and the chat interface. | Security Engineer |
-| 3 | Oct 16–23 | Implement client-side XChaCha20-Poly1305 encryption and integrity checks; demonstrate a working two-user chat for Milestone 2. | Engineer + Architect |
+| 3 | Oct 16–23 | Implement client-side XChaCha20-Poly1305 encryption and integrity checks; demonstrate a working two-user chat for Milestone 2. | Security Engineer + Security Architect |
 | 4 | Oct 23–30 | Add RSA contact-key verification, conversation authorization, rate limiting, and negative tests; complete HW3 due Oct 30. | All |
 | 5 | Oct 30–Nov 6 | Complete ciphertext relay and delivery handling; add logout, token revocation, and initial security audit. | Security Engineer |
 | 6 | Nov 6–13 | Test tampering, replay, and unauthorized access; apply fixes and complete the report draft. Reserve time for HW4. | All |
@@ -157,7 +158,7 @@ The clients authenticate, request and approve chat sessions, then exchange prote
 |---|---|---|
 | 1 | An attacker who can observe network traffic could read messages or steal credentials. | Use TLS 1.3 and end-to-end XChaCha20-Poly1305 encryption; use Secure, HttpOnly, SameSite cookies for web sessions. |
 | 2 | An attacker who can read the database could extract messages, credentials, or contact relationships. | Store ciphertext only; hash passwords with Argon2 and unique salts; keep private keys on clients; minimize and protect relationship metadata. |
-| 3 | An attacker who can replace a contact's public key could impersonate that contact. | Use Ed25519 identity keys, display fingerprints, warn on key changes, and require explicit re-verification. |
+| 3 | An attacker who can replace a contact's public key could impersonate that contact. | Use RSA identity keys, display fingerprints, warn on key changes, and require explicit re-verification. |
 | 4 | A malicious user who can call another user's API endpoint could access private conversations. | Enforce object-level authorization on every endpoint and test horizontal privilege escalation. |
 | 5 | An admin user who can view monitoring data could infer which users are contacting each other. | Expose only registration, account-status, and security events; hide contacts, conversation existence, participants, timing relationships, delivery metadata, and message content. |
 
