@@ -5,19 +5,15 @@
 **Team Members:**
 | Name | GWID | Email | Role |
 |---|---|---|---|
-| Waylon Tan | G42744864 | g42744864@gwu.edu | Security Architect |
-| First Last | G12345679 | name@gwu.edu | Security Engineer |
-| First Last | G12345679 | name@gwu.edu | Security Auditor |
+| Keith Zhang | G24820049 | keith.zhang@gwmail.gwu.edu | Security Architect |
+| Waylon Tan | G42744864 | g42744864@gwu.edu | Security Auditor |
+| Zihan Yang | G36877090 | zihany@gwu.edu | Security Engineer |
 
 **Application:** #4 Encrypted Messenger
 
 ---
 
 ## Section 1 — Product Description
-
-_Describe your application as if writing a one-page brief for a new teammate. Answer:_
-_• What does it do, and who uses it?_
-_• Which security properties will you implement, and how specifically?_
 
 Encrypted Messenger is a web or CLI application for private one-to-one chat over an untrusted network. Users create accounts, authenticate, verify contact keys, and exchange messages through a relay. The relay forwards ciphertext and delivery metadata but cannot decrypt message content.
 
@@ -26,9 +22,6 @@ The application provides end-to-end confidentiality and integrity with XChaCha20
 ---
 
 ## Section 2 — Timeline
-
-_Week-by-week plan from Oct 2 (proposal) to Nov 20 (final submission)._
-_Account for HW3 (due Oct 30) and HW4 (due Dec 5) competing for your time._
 
 | Week | Dates        | Planned Work                                                                                                                   | Owner (role)                           |
 | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
@@ -43,10 +36,6 @@ _Account for HW3 (due Oct 30) and HW4 (due Dec 5) competing for your time._
 ---
 
 ## Section 3 — Design Plan and Mockups
-
-_Include visual mockups of the key screens. These may be created with AI tools,_
-_Figma, hand-drawn sketches, or any other method. Label each and explain what_
-_the user is doing and what security mechanism is in play._
 
 ### Mockup 1 — Chat Screen
 
@@ -131,8 +120,6 @@ The clients authenticate, request and approve chat sessions, then exchange prote
 ## Section 4 — Security Design
 
 ### Security Constraints
-
-_What must your system always guarantee? State these as invariants._
 
 1. Message plaintext is never stored by the relay or written to server logs.
 1. A message is displayed only after XChaCha20-Poly1305 integrity verification succeeds.

@@ -6,17 +6,17 @@
 milestone: 1
 
 team:
-  - name: "First Last"           # replace with full name
-    gwid: "G12345678"            # replace with your GWID
-    email: "name@gwu.edu"        # replace with your GWU email
+  - name: "Keith Zhang"
+    gwid: "G24820049"
+    email: "keith.zhang@gwmail.gwu.edu"
     role: architect              # architect | engineer | auditor
-  - name: "First Last"
-    gwid: "G12345679"
-    email: "name@gwu.edu"
+  - name: "Waylon Tan"
+    gwid: "G42744864"
+    email: "g42744864@gwu.edu"
     role: engineer
-  - name: "First Last"
-    gwid: "G12345680"
-    email: "name@gwu.edu"
+  - name: "Zihan Yang"
+    gwid: "G36877090"
+    email: "zihany@gwu.edu"
     role: auditor
 
 application:
