@@ -13,11 +13,11 @@ team:
   - name: "Waylon Tan"
     gwid: "G42744864"
     email: "g42744864@gwu.edu"
-    role: engineer
+    role: auditor
   - name: "Zihan Yang"
     gwid: "G36877090"
     email: "zihany@gwu.edu"
-    role: auditor
+    role: engineer
 
 application:
   name: "Encrypted Messenger"
