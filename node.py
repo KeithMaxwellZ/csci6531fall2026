@@ -1,4 +1,5 @@
-import json
+import asyncio
+import inspect
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.request import Request, urlopen
@@ -9,12 +10,19 @@ from payload import Payload
 class NodeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers["Content-Length"])
-        body = json.loads(self.rfile.read(length))
-        payload = Payload(body["data"], body["route"])
+        payload = Payload.deserialize(self.rfile.read(length))
         print(f"{self.server.node.__class__.__name__} received: {payload.data} with route: {payload.route}")
-        self.server.node.on_request(self.path, payload)
+        response = self.server.node.on_request(self.path, payload)
+        if inspect.isawaitable(response):
+            response = asyncio.run(response)
+        if not isinstance(response, Payload):
+            response = payload
+        body = response.serialize()
         self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, format, *args):
         return  # Suppress logging to avoid cluttering the output
@@ -58,7 +66,10 @@ class Node:
         return self.on_receive(payload)
 
     def _forward(self, destination, payload):
-        body = json.dumps({"data": payload.data, "route": payload.route}).encode("utf-8")
-        request = Request(destination, data=body, method="POST")
-        urlopen(request).close()
-        return payload
+        request = Request(destination, data=payload.serialize(), method="POST")
+        with urlopen(request) as response:
+            body = response.read()
+        return Payload.deserialize(body) if body else payload
+
+    async def _forward_async(self, destination, payload):
+        return await asyncio.to_thread(self._forward, destination, payload)

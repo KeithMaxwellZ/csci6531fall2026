@@ -7,16 +7,14 @@ class BaseClient(Node):
         self.router_addr = router_addr
         self.received_payloads = []
 
-    def send_payload(self, payload):
-        return self._forward(self.router_addr, payload)
-
     @property
     def send_address(self):
         return f"http://{self.host}:{self._http_server.server_port}/send"
 
     def on_request(self, path, payload):
         if path == "/send":
-            return self.send_payload(payload)
+            # This is for debug use only
+            return self._forward(self.router_addr, payload)
         return self.on_receive(payload)
 
     def on_receive(self, payload):
