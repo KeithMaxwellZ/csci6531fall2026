@@ -15,7 +15,16 @@ class BaseServer(Node):
             return payload
 
         new_payload = self.process_payload(payload)
-        router, new_payload.route = self.resolve_destination(new_payload)
+        try:
+            router, new_payload.route = self.resolve_destination(new_payload)
+        except (KeyError, TypeError, json.JSONDecodeError):
+            return Payload(
+                json.dumps({
+                    "status_code": 400,
+                    "message": "Payload does not contain a valid target",
+                }),
+                "",
+            )
         return self._forward(router, new_payload)
 
     def resolve_destination(self, payload):
