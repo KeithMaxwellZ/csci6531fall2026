@@ -3,9 +3,6 @@
 
 ### Trust Boundaries
 
-*Where does untrusted data enter your system? Draw or describe the boundary between*
-*what you control and what you do not.*
-
 | Boundary | What crosses it | Risk |
 |---|---|---|
 | Client → Router | User submitted JSON payloads | Sensitive data exposure, malformed input |
@@ -14,8 +11,6 @@
 | Router → Recipient Client | Forwarded messages and sender information | Sender impersonation, message tampering |
 
 ### Security-Sensitive Operations
-
-*List the key operations that enforce security properties.*
 
 | Operation | Property | Location in code |
 |---|---|---|
@@ -28,8 +23,6 @@
 ---
 
 ## Threat Scenarios
-
-*Scope notes (from the design doc): `Payload.route` and router addresses are treated as fully secure and out of scope for tampering. Payloads on the wire are expected to be encrypted and signed, but this is not yet implemented, so those tests are expected to fail on the current build and are recorded as findings. An attacker may fully intercept or drop a payload in transit. Every field in `Payload.data` is attacker-controlled, and the server must not rely on the desktop UI for validation.*
 
 Test harness: a Python script using `requests` that POSTs hand-built `Payload` JSON directly to the server's `/payload` endpoint and to a client's `/receive` endpoint, bypassing the desktop UI. Two registered test accounts (`alice`, `bob`) and one unregistered attacker identity (`mallory`) are used throughout.
 
@@ -63,15 +56,15 @@ Each scenario will be logged as: ID, steps, observed result, pass/fail, severity
 
 ### Tool
 
-Claude (Anthropic) will be the primary red-team tool, since it can read the full source and design doc in context. A second model (e.g. ChatGPT or Gemini) will be run on the same prompts as a cross-check, so we can see which findings are model-specific and which recur.
+Both Claude and GPT will be used for testing, and their results will be cross-checked to identify recurring vulnerabilities and model-specific findings.
 
 ### Prompting strategy
 
-The strategy is run in three passes, each with a different input to the AI:
+The strategy is run in three passes:
 
-1. **Black-box, design-level.** Provide only the design doc and the attack surface map (no code). Ask: "You are a penetration tester. Given this architecture, trust boundaries, and threat model (route and router address are trusted; payloads can be intercepted, dropped, or forged), list 10 concrete attacks per security property: accounts, authentication/2FA, session management, authorization, message confidentiality, integrity, replay, input validation, logging, and availability. For each, give the attacker's capabilities, exact steps, and what a secure implementation would do."
-2. **White-box, per function.** Paste each security-sensitive function (`_register`, `_login`, `_verify_2fa`, `_initiate_session`, `_send_message`, plus `Payload.deserialize` and the router/client receive handlers) one at a time. Ask: "Find vulnerabilities in this code. For each, give the line, the exploit payload, severity, and a fix. Do not report style issues."
-3. **Exploit generation and adversarial follow-up.** For each credible finding, ask the AI to write a minimal proof-of-concept payload or script against our local setup. Then ask: "What did you miss? Which attacks combine two of these weaknesses (e.g. missing session check plus username spoofing plus no signing)?" Finally, feed back our known concerns and ask for what is *not* on the list, to counter anchoring.
+1. **Design-context review.** Provide the AI with a short summary of the architecture, threat model, trusted fields, current implementation limits, and existing threat scenarios. Ask it to identify likely concerns and map them to the scenarios already listed. This keeps the design review focused without requiring a separate list of attacks for every property.
+2. **White-box code review.** Give the AI access to the repository and identify the implementation files and functions that control each scenario. Ask it to inspect the code for concrete vulnerabilities, explain the attack path, and identify the expected secure behavior. The AI may create or modify audit scripts and test fixtures directly, but production-code changes require separate authorization.
+3. **Exploit validation.** For each credible finding, ask the AI to write or modify a minimal proof-of-concept script and run it against the local setup. If the finding involves visual behavior or a frontend interaction, ask a human tester to execute and assess it. Record the observed response and evidence, then classify the result as confirmed, not reproducible, or theoretical. Ask the AI to check whether multiple weaknesses combine, such as a missing session check with username spoofing and unsigned messages.
 
 We will use the same threat-model preamble in every prompt so the AI does not waste findings on out-of-scope items (such as tampering with `route`).
 
@@ -79,20 +72,16 @@ We will use the same threat-model preamble in every prompt so the AI does not wa
 
 AI output is treated as a list of hypotheses, not findings. Each suggestion goes through:
 
-1. **Scope filter.** Discard anything that relies on modifying `route` or router addresses, or on an attacker with local operator access, unless the design doc says it is in scope.
+1. **Scope filter.** Discard anything that's out of the threat scope, for example attacks that rely on modifying `route` or router addresses (since it's assumed to be fully secure due to the fact that it's simulating the real network relay).
 2. **Deduplicate and map.** Merge duplicates and map each item to a property and to a row in the Threat Scenarios table (adding new rows for anything novel).
-3. **Verify.** Reproduce each with a script against the running app. Classify as *confirmed*, *not reproducible* (likely a hallucination or already mitigated), or *theoretical* (plausible but untested). Only confirmed items are reported as vulnerabilities.
+3. **Verify.** Reproduce each finding with a script or human test, as appropriate, against the running app. Classify the result as *confirmed*, *not reproducible* (likely a hallucination or already mitigated), or *theoretical* (plausible but untested). Only confirmed items are reported as vulnerabilities.
 4. **Score.** Rank confirmed findings by Impact x Exploitability (High/Medium/Low each), plus whether it requires authentication and whether it breaks a core property (account takeover, impersonation, and message disclosure rank highest).
-5. **Prioritize fixes.** Fix order is: (1) missing authentication or session checks and identity spoofing, (2) secrets in logs and key storage, (3) encryption, signing, and replay protection, (4) rate limiting and input validation, (5) low-severity hardening.
-6. **Record AI quality.** For each model, note true positives, false positives, and what it missed that manual testing found, so we can report how useful the AI red-team was.
+5. **Prioritize fixes.** Group fixes into three priorities: (1) access control, including authentication, session checks, authorization, and identity binding; (2) confidentiality and integrity, including secret and key protection, encryption, signing, and replay protection; and (3) resilience, including input validation and availability.
 
 ---
 
 ## Known Concerns
 
-*Name aspects of your current implementation you already suspect are weak.*
-*This is graded for honesty, not penalized.*
+1. **Insufficient input and protocol validation.** The server accepts attacker-controlled payload fields without consistent type, size, duplicate-field, or structural validation. Malformed requests can produce errors or unhandled exceptions, and the network layer does not consistently return meaningful error statuses.
 
-1. In the current implementation, session authentication is not checked when sending messages.
-2. We still need to work on providing more secure ways to protect users' private keys to prevent unauthorized access.
-3. Current debug logging might leak sensitive data. These sensitive debug logs need to be removed for the final version.
+2. **Deferred key-protection requirement.** Private-key management is not fully implemented in the current build. When key support is fixed, private keys should be able to be protected against unauthorized local access.

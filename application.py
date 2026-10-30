@@ -1,4 +1,6 @@
 import json
+import os
+import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
@@ -7,9 +9,11 @@ from payload import Payload
 
 
 WINDOW_TITLE = "Encrypted Messenger"
-ROUTER_PLACEHOLDER = "http://127.0.0.1:8765/"
+ROUTER_PLACEHOLDER = os.environ.get("MESSENGER_ROUTER_ADDRESS", "http://127.0.0.1:8765/")
 
 SERVER_ADDR = "http://127.0.0.1:9961/"
+PASSWORD_LOCKOUT_ATTEMPTS = 3
+PASSWORD_LOCKOUT_SECONDS = 30
 
 
 class MessengerApp:
@@ -24,10 +28,15 @@ class MessengerApp:
 
         self.client = BaseClient(ROUTER_PLACEHOLDER).start()
         self.username = ""
+        self.is_admin = False
+        self.client_registered = False
+        self.password_failures = 0
+        self.password_lockout_until = 0.0
         self.current_contact = None
         self.received_payload_index = 0
         self.session_contacts = set()
         self.messages = {}
+        self.unread_contacts = set()
 
         self._configure_styles()
         self.show_login()
@@ -56,43 +65,21 @@ class MessengerApp:
             child.destroy()
 
     def _transition(self, callback):
-        """Fade the new scene panel in without dimming the whole window."""
-        steps = 7
+        """Show the destination view immediately."""
         callback()
-        target = getattr(self, "transition_target", None)
-        if target is None or not target.winfo_exists():
-            return
-
-        self.root.update_idletasks()
-        overlay = tk.Toplevel(self.root)
-        overlay.overrideredirect(True)
-        overlay.configure(bg="#101820")
-        overlay.attributes("-alpha", 0.55)
-        overlay.geometry(
-            f"{target.winfo_width()}x{target.winfo_height()}+"
-            f"{target.winfo_rootx()}+{target.winfo_rooty()}"
-        )
-        overlay.lift()
-
-        def fade_in(step):
-            alpha = 0.55 * (step / steps)
-            overlay.attributes("-alpha", alpha)
-            if step > 0:
-                self.root.after(35, fade_in, step - 1)
-            else:
-                overlay.destroy()
-
-        fade_in(steps)
 
     def _label(self, parent, text, size=10, color="#a9bbc3", **kwargs):
         return tk.Label(parent, text=text, font=("Segoe UI", size), fg=color, bg=parent["bg"], **kwargs)
 
     def show_login(self):
         self.username = ""
+        self.is_admin = False
+        self.client_registered = False
         self.current_contact = None
         self.session_contacts = set()
         self.received_payload_index = 0
         self.messages = {}
+        self.unread_contacts = set()
         self._clear()
         page = tk.Frame(self.root, bg="#101820")
         page.pack(fill="both", expand=True)
@@ -117,8 +104,43 @@ class MessengerApp:
         router_address.insert(0, ROUTER_PLACEHOLDER)
 
         ttk.Button(panel, text="Sign in", style="Accent.TButton", command=lambda: self._handle_login(username.get(), password.get(), router_address.get())).pack(fill="x")
-        ttk.Button(panel, text="Create account", command=lambda: self._prompt_registration(username.get(), password.get(), router_address.get())).pack(fill="x", pady=(10, 0))
+        ttk.Button(panel, text="Create account", command=lambda: self._transition(self.show_registration)).pack(fill="x", pady=(10, 0))
         self._label(panel, "TLS session  •  Argon2id password storage", 9, "#6d8792").pack(anchor="w", pady=(28, 0))
+
+    def show_registration(self):
+        self._clear()
+        page = tk.Frame(self.root, bg="#101820")
+        page.pack(fill="both", expand=True)
+
+        panel = tk.Frame(page, bg="#182631", padx=46, pady=38)
+        panel.place(relx=0.5, rely=0.5, anchor="center", width=430, height=720)
+        self.transition_target = panel
+        self._label(panel, "ENCRYPTED MESSENGER", 11, "#2dd4bf").pack(anchor="w")
+        self._label(panel, "Create your account", 27, "#f4f7f8").pack(anchor="w", pady=(20, 6))
+        self._label(panel, "Register a client identity to join the secure workspace.", 10, "#a9bbc3", wraplength=330, justify="left").pack(anchor="w", pady=(0, 28))
+
+        self._label(panel, "USERNAME", 9, "#7f9aa5").pack(anchor="w")
+        username = tk.Entry(panel, bg="#101820", fg="#f4f7f8", insertbackground="#2dd4bf", relief="flat", font=("Segoe UI", 11))
+        username.pack(fill="x", ipady=10, pady=(6, 18))
+        self._label(panel, "PASSWORD", 9, "#7f9aa5").pack(anchor="w")
+        password = tk.Entry(panel, show="*", bg="#101820", fg="#f4f7f8", insertbackground="#2dd4bf", relief="flat", font=("Segoe UI", 11))
+        password.pack(fill="x", ipady=10, pady=(6, 18))
+        self._label(panel, "EMAIL ADDRESS", 9, "#7f9aa5").pack(anchor="w")
+        email = tk.Entry(panel, bg="#101820", fg="#f4f7f8", insertbackground="#2dd4bf", relief="flat", font=("Segoe UI", 11))
+        email.pack(fill="x", ipady=10, pady=(6, 18))
+        self._label(panel, "ROUTER ADDRESS", 9, "#7f9aa5").pack(anchor="w")
+        router_address = tk.Entry(panel, bg="#101820", fg="#f4f7f8", insertbackground="#2dd4bf", relief="flat", font=("Segoe UI", 10))
+        router_address.pack(fill="x", ipady=10, pady=(6, 24))
+        router_address.insert(0, ROUTER_PLACEHOLDER)
+
+        ttk.Button(
+            panel,
+            text="Create account",
+            style="Accent.TButton",
+            command=lambda: self._handle_register(username.get(), password.get(), email.get(), router_address.get()),
+        ).pack(fill="x")
+        ttk.Button(panel, text="Back to sign in", command=lambda: self._transition(self.show_login)).pack(fill="x", pady=(10, 0))
+        self._label(panel, "Your email receives the verification code during sign in.", 9, "#6d8792", wraplength=330, justify="left").pack(anchor="w", pady=(28, 0))
 
     def show_chat(self):
         self._clear()
@@ -127,8 +149,9 @@ class MessengerApp:
         header.pack_propagate(False)
         self._label(header, "ENCRYPTED MESSENGER", 11, "#2dd4bf").pack(side="left", padx=28)
         self._label(header, f"{self.username}  |  client online", 10, "#a9bbc3").pack(side="left", padx=12)
-        ttk.Button(header, text="Admin view", command=lambda: self._transition(self.show_admin)).pack(side="right", padx=(0, 10), pady=16)
-        ttk.Button(header, text="Log out", command=lambda: self._transition(self.show_login)).pack(side="right", padx=22, pady=16)
+        if self.is_admin:
+            ttk.Button(header, text="Admin view", command=lambda: self._transition(self.show_admin)).pack(side="right", padx=(0, 10), pady=16)
+        ttk.Button(header, text="Log out", command=self._handle_logout).pack(side="right", padx=22, pady=16)
 
         body = tk.Frame(self.root, bg="#101820")
         body.pack(fill="both", expand=True, padx=24, pady=24)
@@ -144,6 +167,7 @@ class MessengerApp:
         contact_header.pack(fill="x")
         self._label(contact_header, "CONTACTS", 9, "#7f9aa5").pack(side="left")
         ttk.Button(contact_header, text="Refresh", command=self.refresh_contacts).pack(side="right")
+        self.contact_buttons = {}
         try:
             contact_names = self._do_fetch_contacts()
         except Exception as error:
@@ -153,10 +177,12 @@ class MessengerApp:
             self.current_contact = None
 
         for index, name in enumerate(contact_names):
-            status = "Available contact"
-            button = tk.Button(contacts, text=f"  {name}\n  {status}", anchor="w", justify="left", bg="#243642" if name == self.current_contact else "#182631", fg="#f4f7f8", activebackground="#2b4552", activeforeground="#ffffff", relief="flat", bd=0, padx=8, pady=12, font=("Segoe UI", 10))
+            is_unread = name in self.unread_contacts
+            status = "New message" if is_unread else "Available contact"
+            button = tk.Button(contacts, text=f"  {name}\n  {status}", anchor="w", justify="left", bg="#2dd4bf" if is_unread else ("#243642" if name == self.current_contact else "#182631"), fg="#08151b" if is_unread else "#f4f7f8", activebackground="#5eead4" if is_unread else "#2b4552", activeforeground="#08151b" if is_unread else "#ffffff", relief="flat", bd=0, padx=8, pady=12, font=("Segoe UI", 10))
             button.pack(fill="x", pady=(18 if index == 0 else 6, 0))
             button.configure(command=lambda contact=name: self.select_contact(contact))
+            self.contact_buttons[name] = button
         self._label(contacts, "\nYour identity key\nRSA fingerprint verified", 9, "#6d8792", justify="left").pack(anchor="w", side="bottom")
 
     def show_admin(self):
@@ -207,10 +233,23 @@ class MessengerApp:
 
     def select_contact(self, contact):
         self.current_contact = contact
+        self.unread_contacts.discard(contact)
         self._transition(self.show_chat)
 
     def refresh_contacts(self):
         self._transition(self.show_chat)
+
+    def _highlight_contact(self, contact):
+        self.unread_contacts.add(contact)
+        button = getattr(self, "contact_buttons", {}).get(contact)
+        if button is not None and button.winfo_exists():
+            button.configure(
+                text=f"  {contact}\n  New message",
+                bg="#2dd4bf",
+                fg="#08151b",
+                activebackground="#5eead4",
+                activeforeground="#08151b",
+            )
 
     def _render_messages(self):
         self.transcript.configure(state="normal")
@@ -257,12 +296,21 @@ class MessengerApp:
         if self.client is not None:
             self.client.stop()
         self.client = BaseClient(address).start()
+        self.client_registered = False
         self.current_contact = None
         self.session_contacts = set()
         self.received_payload_index = 0
         self.messages = {}
 
     def _handle_login(self, username, password, router_address):
+        remaining_lockout = self._password_lockout_remaining()
+        if remaining_lockout > 0:
+            messagebox.showerror(
+                "Login temporarily locked",
+                f"Too many failed password attempts. Try again in {remaining_lockout} seconds.",
+            )
+            return
+
         username = username.strip()
         if not username or not password:
             messagebox.showerror("Login failed", "Username and password are required.")
@@ -270,17 +318,47 @@ class MessengerApp:
         self._connect_client(router_address)
         self.username = username
         try:
-            if not self._do_login(self.username, password):
+            login_result = self._do_login(self.username, password)
+            if login_result is None:
+                self._record_password_failure()
+                if self._password_lockout_remaining() > 0:
+                    messagebox.showerror(
+                        "Login temporarily locked",
+                        "Three consecutive password attempts failed. Try again in 30 seconds.",
+                    )
+                    return
                 messagebox.showerror("Login failed", "Invalid username or password.")
                 return
+            self.password_failures = 0
+            self.password_lockout_until = 0.0
+            self.client_registered = True
             code = simpledialog.askstring("Two-factor verification", "Enter your verification code:")
             if not code or not self._do_2fa(code):
                 messagebox.showerror("Verification failed", "The verification code was not accepted.")
                 return
+            self.is_admin = login_result
         except Exception as error:
             messagebox.showerror("Login failed", str(error))
             return
         self._transition(self.show_chat)
+
+    def _password_lockout_remaining(self):
+        remaining = self.password_lockout_until - time.monotonic()
+        if remaining <= 0:
+            self.password_lockout_until = 0.0
+            return 0
+        return int(remaining + 0.999)
+
+    def _record_password_failure(self):
+        self.password_failures += 1
+        if self.password_failures >= PASSWORD_LOCKOUT_ATTEMPTS:
+            self.password_lockout_until = time.monotonic() + PASSWORD_LOCKOUT_SECONDS
+
+    def _handle_logout(self):
+        try:
+            self._do_logout()
+        finally:
+            self._transition(self.show_login)
 
     def _prompt_registration(self, username, password, router_address):
         email = simpledialog.askstring("Create account", "Email address:")
@@ -317,6 +395,8 @@ class MessengerApp:
                     self.messages.setdefault(sender, []).append((sender, text))
                     if sender == self.current_contact and hasattr(self, "transcript"):
                         self._render_messages()
+                    elif sender != self.current_contact:
+                        self._highlight_contact(sender)
         self.root.after(250, self._poll_received_messages)
 
     # The following two methods are where the cryptographic operations would be performed
@@ -354,12 +434,19 @@ class MessengerApp:
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         status_code = resp_obj.get("status_code")
-        return status_code == 200
+        if status_code != 200:
+            return None
+        return bool(resp_obj.get("is_admin", False))
+
+    def _do_logout(self):
+        payload = self._create_payload({"type": "logout", "username": self.username})
+        resp = self.client._forward(self.client.router_addr, payload)
+        resp_obj = self._decode_payload(resp)
+        return resp_obj.get("status_code") == 200
 
     def _do_2fa(self, code):
         """
-        Server will send a 2FA code to user email
-        For purpose of debug a code 666 will always be accepted. (verification on serverside)
+        Verify the 2FA code sent to the user's email.
         """
         payload = self._create_payload({"type": "2fa", "code": code, "username": self.username})
         resp = self.client._forward(self.client.router_addr, payload)
@@ -402,10 +489,13 @@ class MessengerApp:
 
     def _on_receive_message(self, payload):
         """
-        Handle an incoming message payload from the server. 
-        The payload is expected to contain the sender and the message.
+        Handle incoming message and presence payloads from the server.
         """
         obj = self._decode_payload(payload)
+        if obj.get("type") in {"user_online", "user_offline"}:
+            if self.username:
+                self.refresh_contacts()
+            return None
         sender = obj.get("sender")
         message = obj.get("message")
         if sender and message:
@@ -414,9 +504,13 @@ class MessengerApp:
             return None
 
     def close(self):
-        if self.client is not None:
-            self.client.stop()
-        self.root.destroy()
+        try:
+            if self.client is not None and self.client_registered and self.username:
+                self._do_logout()
+        finally:
+            if self.client is not None:
+                self.client.stop()
+            self.root.destroy()
 
 
 def main():

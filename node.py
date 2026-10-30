@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.request import Request, urlopen
@@ -7,11 +8,20 @@ from urllib.request import Request, urlopen
 from payload import Payload
 
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 class NodeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers["Content-Length"])
         payload = Payload.deserialize(self.rfile.read(length))
-        print(f"{self.server.node.__class__.__name__} received: {payload.data} with route: {payload.route}")
+        logger.debug(
+            "%s received: %s with route: %s",
+            self.server.node.__class__.__name__,
+            payload.data,
+            payload.route,
+        )
         response = self.server.node.on_request(self.path, payload)
         if inspect.isawaitable(response):
             response = asyncio.run(response)

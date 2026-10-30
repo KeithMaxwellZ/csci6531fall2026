@@ -1,4 +1,9 @@
+import logging
+
 from node import Node
+
+
+logger = logging.getLogger(__name__)
 
 
 class BaseRouter(Node):
@@ -11,5 +16,10 @@ class BaseRouter(Node):
         return await self._forward_async(payload.route, payload)
 
     def inspect_payload(self, payload):
-        print(f"{self.__class__.__name__} inspecting payload: {payload.data} with route: {payload.route}")
+        logger.debug(
+            "%s inspecting payload: %s with route: %s",
+            self.__class__.__name__,
+            payload.data,
+            payload.route,
+        )
         return payload

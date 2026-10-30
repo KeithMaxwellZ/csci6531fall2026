@@ -1,0 +1,47 @@
+# ============================================================
+# Milestone 2 Manifest — CSCI 4531/6531 Project
+# Rename this ZIP to: lastname1-lastname2-lastname3.m2.zip before submitting
+# ============================================================
+
+milestone: 2
+
+team:
+  - gwid: "TBD"
+    role: architect
+  - gwid: "TBD"
+    role: engineer
+  - gwid: "TBD"
+    role: auditor
+
+demo_video_url: "https://drive.google.com/file/d/1BEyTAiGUtWFu4i3KubkX2jGBU6lc-_Fe/view?usp=sharing"
+
+features_working:                           # list what a grader can run right now
+  - "user registration and login"
+  - "email two-factor verification during login"
+  - "relay and client-node forwarding"
+  - "contact discovery and session initiation"
+  - "message delivery through the relay"
+  - "logout and presence updates"
+
+security_properties_implemented:           # what is actually working
+  - accounts
+
+security_properties_remaining:             # what is still incomplete
+  - encryption
+  - authorization_and_session_binding
+  - audit_log
+  - input_validation_and_hardened_transport
+
+deviations_from_proposal: false            # true if design changed significantly
+
+ai_tools_used:
+  - GPT
+  - claude
+
+checklist:
+  progress_report: true
+  code_is_runnable: true         # can it be started following src/SETUP.md?
+  demo_video_narrated: true
+  ai_transcript_included: true
+  audit_plan_covers_all_properties: true
+  deviations_documented: "N/A"    # no significant deviations from the proposal
