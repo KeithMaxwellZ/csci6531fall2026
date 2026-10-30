@@ -150,6 +150,8 @@ activemq-data/
 # Environments
 .env
 .envrc
+info.json
+server.sqlite3
 .venv
 env/
 venv/

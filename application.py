@@ -1,4 +1,5 @@
 import json
+import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
@@ -10,6 +11,8 @@ WINDOW_TITLE = "Encrypted Messenger"
 ROUTER_PLACEHOLDER = "http://127.0.0.1:8765/"
 
 SERVER_ADDR = "http://127.0.0.1:9961/"
+PASSWORD_LOCKOUT_ATTEMPTS = 3
+PASSWORD_LOCKOUT_SECONDS = 30
 
 
 class MessengerApp:
@@ -24,6 +27,9 @@ class MessengerApp:
 
         self.client = BaseClient(ROUTER_PLACEHOLDER).start()
         self.username = ""
+        self.is_admin = False
+        self.password_failures = 0
+        self.password_lockout_until = 0.0
         self.current_contact = None
         self.received_payload_index = 0
         self.session_contacts = set()
@@ -89,6 +95,7 @@ class MessengerApp:
 
     def show_login(self):
         self.username = ""
+        self.is_admin = False
         self.current_contact = None
         self.session_contacts = set()
         self.received_payload_index = 0
@@ -127,7 +134,8 @@ class MessengerApp:
         header.pack_propagate(False)
         self._label(header, "ENCRYPTED MESSENGER", 11, "#2dd4bf").pack(side="left", padx=28)
         self._label(header, f"{self.username}  |  client online", 10, "#a9bbc3").pack(side="left", padx=12)
-        ttk.Button(header, text="Admin view", command=lambda: self._transition(self.show_admin)).pack(side="right", padx=(0, 10), pady=16)
+        if self.is_admin:
+            ttk.Button(header, text="Admin view", command=lambda: self._transition(self.show_admin)).pack(side="right", padx=(0, 10), pady=16)
         ttk.Button(header, text="Log out", command=lambda: self._transition(self.show_login)).pack(side="right", padx=22, pady=16)
 
         body = tk.Frame(self.root, bg="#101820")
@@ -263,6 +271,14 @@ class MessengerApp:
         self.messages = {}
 
     def _handle_login(self, username, password, router_address):
+        remaining_lockout = self._password_lockout_remaining()
+        if remaining_lockout > 0:
+            messagebox.showerror(
+                "Login temporarily locked",
+                f"Too many failed password attempts. Try again in {remaining_lockout} seconds.",
+            )
+            return
+
         username = username.strip()
         if not username or not password:
             messagebox.showerror("Login failed", "Username and password are required.")
@@ -270,9 +286,20 @@ class MessengerApp:
         self._connect_client(router_address)
         self.username = username
         try:
-            if not self._do_login(self.username, password):
+            login_result = self._do_login(self.username, password)
+            if login_result is None:
+                self._record_password_failure()
+                if self._password_lockout_remaining() > 0:
+                    messagebox.showerror(
+                        "Login temporarily locked",
+                        "Three consecutive password attempts failed. Try again in 30 seconds.",
+                    )
+                    return
                 messagebox.showerror("Login failed", "Invalid username or password.")
                 return
+            self.password_failures = 0
+            self.password_lockout_until = 0.0
+            self.is_admin = login_result
             code = simpledialog.askstring("Two-factor verification", "Enter your verification code:")
             if not code or not self._do_2fa(code):
                 messagebox.showerror("Verification failed", "The verification code was not accepted.")
@@ -281,6 +308,18 @@ class MessengerApp:
             messagebox.showerror("Login failed", str(error))
             return
         self._transition(self.show_chat)
+
+    def _password_lockout_remaining(self):
+        remaining = self.password_lockout_until - time.monotonic()
+        if remaining <= 0:
+            self.password_lockout_until = 0.0
+            return 0
+        return int(remaining + 0.999)
+
+    def _record_password_failure(self):
+        self.password_failures += 1
+        if self.password_failures >= PASSWORD_LOCKOUT_ATTEMPTS:
+            self.password_lockout_until = time.monotonic() + PASSWORD_LOCKOUT_SECONDS
 
     def _prompt_registration(self, username, password, router_address):
         email = simpledialog.askstring("Create account", "Email address:")
@@ -338,7 +377,9 @@ class MessengerApp:
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         status_code = resp_obj.get("status_code")
-        return status_code == 200
+        if status_code != 200:
+            return False
+        return True
 
     def _do_login(self, username, password):
         """
@@ -354,7 +395,9 @@ class MessengerApp:
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         status_code = resp_obj.get("status_code")
-        return status_code == 200
+        if status_code != 200:
+            return None
+        return bool(resp_obj.get("is_admin", False))
 
     def _do_2fa(self, code):
         """
