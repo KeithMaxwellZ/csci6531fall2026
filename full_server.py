@@ -82,6 +82,7 @@ class FullServer(BaseServer):
 				)
 				"""
 			)
+			connection.commit()
 			connection.execute(
 				"""
 				CREATE TABLE IF NOT EXISTS audit_logs (
@@ -106,6 +107,7 @@ class FullServer(BaseServer):
 						"INSERT INTO users (username, password, email, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
 						(username, user["password"], user["email"], int(user.get("is_admin", False)), time.time()),
 					)
+				connection.commit()
 				return
 			self.users = {}
 			for username, password, email, is_admin in rows:
@@ -121,6 +123,7 @@ class FullServer(BaseServer):
 					"email": email,
 					"is_admin": bool(is_admin),
 				}
+			connection.commit()
 
 	def _save_user(self, username, user):
 		with self.database_lock, closing(sqlite3.connect(self.database_path)) as connection:
@@ -128,6 +131,7 @@ class FullServer(BaseServer):
 				"INSERT INTO users (username, password, email, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
 				(username, user["password"], user["email"], int(user.get("is_admin", False)), time.time()),
 			)
+			connection.commit()
 
 	def _log_event(self, username, event, success, details=""):
 		with self.database_lock, closing(sqlite3.connect(self.database_path)) as connection:
@@ -135,6 +139,7 @@ class FullServer(BaseServer):
 				"INSERT INTO audit_logs (timestamp, username, event, success, details) VALUES (?, ?, ?, ?, ?)",
 				(time.time(), username, event, int(success), details),
 			)
+			connection.commit()
 
 	def _register(self, request):
 		username = request["username"]
