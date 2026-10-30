@@ -6,11 +6,11 @@
 milestone: 2
 
 team:
-  - gwid: "TBD"
+  - gwid: "G24820049"
     role: architect
-  - gwid: "TBD"
+  - gwid: "G36877090"
     role: engineer
-  - gwid: "TBD"
+  - gwid: "G42744864"
     role: auditor
 
 demo_video_url: "https://drive.google.com/file/d/1BEyTAiGUtWFu4i3KubkX2jGBU6lc-_Fe/view?usp=sharing"
