@@ -17,9 +17,8 @@ class NodeHandler(BaseHTTPRequestHandler):
         length = int(self.headers["Content-Length"])
         payload = Payload.deserialize(self.rfile.read(length))
         logger.debug(
-            "%s received: %s with route: %s",
+            "%s received payload with route: %s",
             self.server.node.__class__.__name__,
-            payload.data,
             payload.route,
         )
         response = self.server.node.on_request(self.path, payload)

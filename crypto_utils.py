@@ -6,20 +6,33 @@ import hmac
 import secrets
 from typing import Optional, Tuple
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.asymmetric import ed25519, rsa, padding, x25519
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 PASSWORD_ITERATIONS = 600_000
 KEY_SIZE = 32
+PASSWORD_HASHER = PasswordHasher(
+    time_cost=3,
+    memory_cost=65536,
+    parallelism=4,
+    hash_len=32,
+    salt_len=16,
+)
 
 
 def hash_password(password: str, salt: Optional[bytes] = None) -> str:
-    """Return a versioned, salted PBKDF2-HMAC-SHA256 password record."""
-    if salt is None:
-        salt = secrets.token_bytes(16)
+    """Return a salted Argon2id password record."""
+    if salt is not None:
+        return _hash_password_with_legacy_salt(password, salt)
+    return PASSWORD_HASHER.hash(password)
+
+
+def _hash_password_with_legacy_salt(password: str, salt: bytes) -> str:
     digest = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS
     )
@@ -34,7 +47,12 @@ def hash_password(password: str, salt: Optional[bytes] = None) -> str:
 
 
 def verify_password(password: str, password_record: str) -> bool:
-    """Constant-time verification of a password record."""
+    """Verify Argon2id records and legacy PBKDF2 records."""
+    if password_record.startswith("$argon2"):
+        try:
+            return PASSWORD_HASHER.verify(password_record, password)
+        except (VerificationError, InvalidHashError, VerifyMismatchError):
+            return False
     try:
         algorithm, iterations, salt_text, digest_text = password_record.split("$", 3)
         if algorithm != "pbkdf2_sha256":
@@ -46,6 +64,34 @@ def verify_password(password: str, password_record: str) -> bool:
     except (InvalidSignature, TypeError, ValueError):
         return False
     return hmac.compare_digest(actual, expected)
+
+
+def generate_rsa_identity_key_pair() -> Tuple[bytes, bytes]:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    public_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return private_pem, public_pem
+
+
+def rsa_sign(private_pem: bytes, message: bytes) -> bytes:
+    private_key = serialization.load_pem_private_key(private_pem, password=None)
+    return private_key.sign(message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+
+
+def rsa_verify(public_pem: bytes, message: bytes, signature: bytes) -> bool:
+    try:
+        public_key = serialization.load_pem_public_key(public_pem)
+        public_key.verify(signature, message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        return True
+    except (InvalidSignature, TypeError, ValueError):
+        return False
 
 
 def generate_signing_key_pair() -> Tuple[bytes, bytes]:
@@ -97,12 +143,22 @@ def derive_message_key(private_key: bytes, peer_public_key: bytes, context: byte
 
 
 def encrypt_message(plaintext: bytes, key: bytes, associated_data: bytes = b"") -> Tuple[bytes, bytes]:
-    nonce = secrets.token_bytes(12)
-    return nonce, AESGCM(key).encrypt(nonce, plaintext, associated_data)
+    from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_encrypt
+
+    nonce = secrets.token_bytes(24)
+    ciphertext = crypto_aead_xchacha20poly1305_ietf_encrypt(
+        plaintext,
+        associated_data,
+        nonce,
+        key,
+    )
+    return nonce, ciphertext
 
 
 def decrypt_message(ciphertext: bytes, nonce: bytes, key: bytes, associated_data: bytes = b"") -> bytes:
-    return AESGCM(key).decrypt(nonce, ciphertext, associated_data)
+    from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_decrypt
+
+    return crypto_aead_xchacha20poly1305_ietf_decrypt(ciphertext, associated_data, nonce, key)
 
 
 def generate_session_token() -> str:

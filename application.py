@@ -1,10 +1,24 @@
+import base64
+import hashlib
 import json
 import os
+import secrets
 import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from client import BaseClient
+from nacl.exceptions import CryptoError
+
+from crypto_utils import (
+    decrypt_message,
+    derive_message_key,
+    encrypt_message,
+    generate_exchange_key_pair,
+    generate_rsa_identity_key_pair,
+    rsa_sign,
+    rsa_verify,
+)
 from payload import Payload
 
 
@@ -37,6 +51,17 @@ class MessengerApp:
         self.session_contacts = set()
         self.messages = {}
         self.unread_contacts = set()
+        self.exchange_private_key, self.exchange_public_key = generate_exchange_key_pair()
+        self.identity_private_key, self.identity_public_key = generate_rsa_identity_key_pair()
+        self.contact_exchange_keys = {}
+        self.contact_identity_keys = {}
+        self.contact_key_fingerprints = {}
+        self.message_keys = {}
+        self.chat_sessions = {}
+        self.chat_session_history = {}
+        self.session_token = None
+        self.outgoing_counters = {}
+        self.incoming_counters = {}
 
         self._configure_styles()
         self.show_login()
@@ -80,6 +105,7 @@ class MessengerApp:
         self.received_payload_index = 0
         self.messages = {}
         self.unread_contacts = set()
+        self.session_token = None
         self._clear()
         page = tk.Frame(self.root, bg="#101820")
         page.pack(fill="both", expand=True)
@@ -297,6 +323,7 @@ class MessengerApp:
             self.client.stop()
         self.client = BaseClient(address).start()
         self.client_registered = False
+        self.session_token = None
         self.current_contact = None
         self.session_contacts = set()
         self.received_payload_index = 0
@@ -439,7 +466,7 @@ class MessengerApp:
         return bool(resp_obj.get("is_admin", False))
 
     def _do_logout(self):
-        payload = self._create_payload({"type": "logout", "username": self.username})
+        payload = self._create_payload({"type": "logout", "username": self.username, "session_token": self.session_token})
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         return resp_obj.get("status_code") == 200
@@ -452,28 +479,103 @@ class MessengerApp:
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         status_code = resp_obj.get("status_code")
-        return status_code == 200
+        if status_code != 200:
+            return False
+        self.session_token = resp_obj.get("session_token")
+        return self._do_publish_keys()
+
+    def _do_publish_keys(self):
+        payload = self._create_payload({
+            "type": "publish_keys",
+            "username": self.username,
+            "session_token": self.session_token,
+            "exchange_public_key": base64.b64encode(self.exchange_public_key).decode("ascii"),
+            "identity_public_key": base64.b64encode(self.identity_public_key).decode("ascii"),
+        })
+        resp = self.client._forward(self.client.router_addr, payload)
+        resp_obj = self._decode_payload(resp)
+        return resp_obj.get("status_code") == 200
+
+    def _fetch_contact_keys(self, contact):
+        payload = self._create_payload({
+            "type": "fetch_keys",
+            "username": self.username,
+            "session_token": self.session_token,
+            "contact": contact,
+        })
+        resp = self.client._forward(self.client.router_addr, payload)
+        resp_obj = self._decode_payload(resp)
+        if resp_obj.get("status_code") != 200:
+            return False
+        exchange_key = base64.b64decode(resp_obj["exchange_public_key"])
+        identity_key = base64.b64decode(resp_obj["identity_public_key"])
+        fingerprint = hashlib.sha256(exchange_key + identity_key).hexdigest()
+        previous_fingerprint = self.contact_key_fingerprints.get(contact)
+        if previous_fingerprint is not None and previous_fingerprint != fingerprint:
+            return False
+        self.contact_key_fingerprints[contact] = fingerprint
+        self.contact_exchange_keys[contact] = exchange_key
+        self.contact_identity_keys[contact] = identity_key
+        self.message_keys[contact] = derive_message_key(self.exchange_private_key, exchange_key)
+        return True
 
     def _do_initiate_session(self, contact):
         """
         Initiate a secure session with a contact. This would involve key exchange and session establishment.
         """
-        payload = self._create_payload({"type": "initiate_session", "contact": contact, "username": self.username})
+        payload = self._create_payload({"type": "initiate_session", "contact": contact, "username": self.username, "session_token": self.session_token})
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         status_code = resp_obj.get("status_code")
-        # Should have more info about the session in the response
-        return status_code == 200
+        if status_code != 200:
+            return False
+        if not self._fetch_contact_keys(contact):
+            return False
+        session_id = secrets.token_urlsafe(24)
+        self.chat_sessions[contact] = session_id
+        self.outgoing_counters[contact] = 0
+        self.incoming_counters[contact] = 0
+        self.message_keys[contact] = derive_message_key(
+            self.exchange_private_key,
+            self.contact_exchange_keys[contact],
+            context=f"messenger:{session_id}".encode("utf-8"),
+        )
+        return True
 
     def _do_send_message(self, message, contact):
         """
         Send a message to a contact (The selected contact is the current contact in the UI)
         and wait for a response from the server. The server will forward the message to the contact's client.
         """
-        payload = self._create_payload({"type": "message", "message": message, "target": contact, "username": self.username})
+        key = self.message_keys.get(contact)
+        session_id = self.chat_sessions.get(contact)
+        if key is None or session_id is None:
+            return False
+        counter = self.outgoing_counters.get(contact, 0) + 1
+        associated_data = json.dumps({
+            "sender": self.username,
+            "target": contact,
+            "session_id": session_id,
+            "counter": counter,
+        }, sort_keys=True).encode("utf-8")
+        nonce, ciphertext = encrypt_message(message.encode("utf-8"), key, associated_data)
+        signature = rsa_sign(
+            self.identity_private_key,
+            associated_data + nonce + ciphertext,
+        )
+        envelope = {
+            "nonce": base64.b64encode(nonce).decode("ascii"),
+            "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+            "counter": counter,
+            "session_id": session_id,
+            "signature": base64.b64encode(signature).decode("ascii"),
+        }
+        payload = self._create_payload({"type": "message", "message": json.dumps(envelope), "target": contact, "username": self.username, "session_token": self.session_token})
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         status_code = resp_obj.get("status_code")
+        if status_code == 200:
+            self.outgoing_counters[contact] = counter
         return status_code == 200
 
     def _do_fetch_contacts(self):
@@ -481,7 +583,7 @@ class MessengerApp:
         Send a request to the server to fetch the list of current active contacts for the current user.
         (Server will return contacts that last appeared within 1h of the request)
         """
-        payload = self._create_payload({"type": "fetch_contacts", "username": self.username})
+        payload = self._create_payload({"type": "fetch_contacts", "username": self.username, "session_token": self.session_token})
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
         contacts = resp_obj.get("contacts", [])
@@ -499,7 +601,46 @@ class MessengerApp:
         sender = obj.get("sender")
         message = obj.get("message")
         if sender and message:
-            return (sender, message)
+            try:
+                envelope = json.loads(message)
+                if not self._fetch_contact_keys(sender):
+                    return None
+                identity_key = self.contact_identity_keys[sender]
+                session_id = envelope["session_id"]
+                if not isinstance(session_id, str) or not session_id:
+                    return None
+                current_session = self.chat_sessions.get(sender)
+                if current_session != session_id and session_id in self.chat_session_history.get(sender, set()):
+                    return None
+                key = derive_message_key(
+                    self.exchange_private_key,
+                    self.contact_exchange_keys[sender],
+                    context=f"messenger:{session_id}".encode("utf-8"),
+                )
+                counter = envelope["counter"]
+                if counter <= self.incoming_counters.get(sender, 0):
+                    return None
+                nonce = base64.b64decode(envelope["nonce"])
+                ciphertext = base64.b64decode(envelope["ciphertext"])
+                signature = base64.b64decode(envelope["signature"])
+                associated_data = json.dumps({
+                    "sender": sender,
+                    "target": self.username,
+                    "session_id": session_id,
+                    "counter": counter,
+                }, sort_keys=True).encode("utf-8")
+                if not rsa_verify(identity_key, associated_data + nonce + ciphertext, signature):
+                    return None
+                plaintext = decrypt_message(ciphertext, nonce, key, associated_data)
+                if current_session != session_id:
+                    if current_session is not None:
+                        self.chat_session_history.setdefault(sender, set()).add(current_session)
+                    self.chat_sessions[sender] = session_id
+                    self.incoming_counters[sender] = 0
+                self.incoming_counters[sender] = counter
+                return (sender, plaintext.decode("utf-8"))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError, CryptoError):
+                return None
         else:
             return None
 

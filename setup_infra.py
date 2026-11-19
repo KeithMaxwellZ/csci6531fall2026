@@ -4,8 +4,6 @@ import sys
 import time
 
 from application import main as application_main
-from client import BaseClient
-from payload import Payload
 from router import BaseRouter
 from full_server import FullServer
 

