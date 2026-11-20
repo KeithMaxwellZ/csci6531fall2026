@@ -1,0 +1,211 @@
+import json
+import tempfile
+import unittest
+import time
+import secrets
+
+from pathlib import Path
+
+from full_server import FullServer
+from payload import Payload
+
+from nacl.exceptions import CryptoError
+from crypto_utils import encrypt_message, decrypt_message
+
+from unittest.mock import patch
+
+class SecurityAuditTests(unittest.TestCase):
+
+    def test_unauthorized_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = FullServer(
+                database_path=Path(temp_dir) / "audit.sqlite3"
+            )
+
+            request = {
+                "type": "message",
+                "username": "alice",
+                "target": "bob",
+                "message": "Unauthorized test message"
+            }
+
+            response = server.on_receive(
+                Payload(json.dumps(request), "")
+            )
+
+            result = json.loads(response.data)
+
+            print("Actual Result:", result)
+
+            self.assertEqual(result["status_code"], 401)
+
+
+    def test_session_impersonation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = FullServer(
+                database_path=Path(temp_dir) / "audit.sqlite3"
+            )
+
+            # Simulate an authenticated Alice session.
+            alice_token = "test_alice_session_token"
+
+            server.sessions["alice"] = {
+                "authenticated": True,
+                "session_token": alice_token,
+                "session_expires_at": time.time() + 3600
+            }
+
+            # Attack: use Alice's token while claiming to be Bob.
+            request = {
+                "type": "message",
+                "username": "bob",
+                "session_token": alice_token,
+                "target": "alice",
+                "message": "Impersonation test"
+            }
+
+            response = server.on_receive(
+                Payload(json.dumps(request), "")
+            )
+
+            result = json.loads(response.data)
+
+            print("Actual Result:", result)
+
+            self.assertEqual(result["status_code"], 401)
+
+
+    def test_brute_force_login(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = FullServer(
+                database_path=Path(temp_dir) / "audit.sqlite3"
+            )
+
+            status_codes = []
+
+            for i in range(4):
+                request = {
+                    "type": "login",
+                    "username": "alice",
+                    "password": "wrongpassword"
+                }
+
+                response = server.on_receive(
+                    Payload(json.dumps(request), "")
+                )
+
+                result = json.loads(response.data)
+                status_codes.append(result["status_code"])
+
+                print(
+                    f"Attempt {i + 1}: "
+                    f"{result['status_code']} - "
+                    f"{result.get('message')}"
+                )
+
+            self.assertEqual(
+                status_codes,
+                [401, 401, 401, 429]
+            )
+
+
+    def test_message_tampering(self):
+        key = secrets.token_bytes(32)
+        plaintext = b"Hello Bob, this is a secret message."
+
+        # Encrypt the original message.
+        nonce, ciphertext = encrypt_message(plaintext, key)
+
+        # Verify normal decryption works.
+        decrypted = decrypt_message(ciphertext, nonce, key)
+        self.assertEqual(decrypted, plaintext)
+
+        print("Original message decrypted successfully.")
+
+        # Attack: modify one byte of the ciphertext.
+        tampered = bytearray(ciphertext)
+        tampered[0] ^= 1
+
+        # The modified ciphertext should be rejected.
+        with self.assertRaises(CryptoError):
+            decrypt_message(bytes(tampered), nonce, key)
+
+        print("Tampered ciphertext rejected.")
+
+
+    def test_logout_session_replay(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = FullServer(
+                database_path=Path(temp_dir) / "audit.sqlite3"
+            )
+
+            # Step 1: Login with valid credentials.
+            # Mock only the SMTP email delivery.
+            with patch.object(server, "_send_2fa_code", return_value=None):
+                login_request = {
+                    "type": "login",
+                    "username": "alice",
+                    "password": "alice"
+                }
+
+                response = server.on_receive(
+                    Payload(json.dumps(login_request), "")
+                )
+                login_result = json.loads(response.data)
+
+            self.assertEqual(login_result["status_code"], 200)
+            print("Login successful.")
+
+            # Step 2: Complete 2FA using the demo code.
+            verify_request = {
+                "type": "2fa",
+                "username": "alice",
+                "code": "666"
+            }
+
+            response = server.on_receive(
+                Payload(json.dumps(verify_request), "")
+            )
+            verify_result = json.loads(response.data)
+
+            self.assertEqual(verify_result["status_code"], 200)
+            token = verify_result["session_token"]
+
+            print("2FA verification successful.")
+
+            # Step 3: Logout with the valid session token.
+            logout_request = {
+                "type": "logout",
+                "username": "alice",
+                "session_token": token
+            }
+
+            response = server.on_receive(
+                Payload(json.dumps(logout_request), "")
+            )
+            logout_result = json.loads(response.data)
+
+            print("Logout status:", logout_result["status_code"])
+            self.assertEqual(logout_result["status_code"], 200)
+
+            # Step 4: Attack - reuse the old token.
+            replay_request = {
+                "type": "message",
+                "username": "alice",
+                "session_token": token,
+                "target": "bob",
+                "message": "Replay attack after logout"
+            }
+
+            response = server.on_receive(
+                Payload(json.dumps(replay_request), "")
+            )
+            replay_result = json.loads(response.data)
+
+            print("Replay status:", replay_result["status_code"])
+            print("Replay response:", replay_result["message"])
+
+            self.assertEqual(replay_result["status_code"], 401)
+
+if __name__ == "__main__":
+    unittest.main()
