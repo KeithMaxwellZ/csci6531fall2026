@@ -287,5 +287,4 @@ Review the latest source code of our Encrypted Messenger project and identify po
 
 | Risk | Severity | Justification for Accepting |
 |---|---|---|
-| Hardcoded 2FA Demo Bypass | High | The code 666 is retained for local demonstration. It should be disabled before production deployment |
 | Missing TLS 1.3 | Medium | The application is currently used for local demonstration and testing. TLS should be implemented before deployment over untrusted networks. |
