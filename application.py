@@ -401,15 +401,16 @@ class MessengerApp:
         self._connect_client(router_address)
         self.username = username
         try:
-            registered = self._do_register(self.username, password, email)
+            registration = self._do_register(self.username, password, email)
         except Exception as error:
             messagebox.showerror("Registration failed", str(error))
             return
-        if registered:
+        if registration.get("status_code") == 200:
             messagebox.showinfo("Account created", "Your account was created. You can now sign in.")
             self._transition(self.show_login)
         else:
-            messagebox.showerror("Registration failed", "The account could not be created.")
+            reason = registration.get("message") or "The account could not be created."
+            messagebox.showerror("Registration failed", reason)
 
     def _poll_received_messages(self):
         if self.client is not None:
