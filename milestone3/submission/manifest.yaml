@@ -27,13 +27,13 @@ application:
     - audit_log
 
 submission:
-  report_page_count: 0           # fill in actual page count
-  slides_page_count: 0
-  presentation_video_url: "https://youtube.com/..."
+  report_page_count: 13
+  slides_page_count: 14
+  presentation_video_url: "https://drive.google.com/file/d/1b9ztaTPlhUuAXvUO6u_SbAlWPdVjOAzx/view?usp=sharing"
 
 security_audit:
-  vulnerabilities_found: 0       # five scenarios were defended; no vulnerability was confirmed
-  vulnerabilities_fixed: 0       # no vulnerability required a fix
+  vulnerabilities_found: 5       # five scenarios were defended; no vulnerability was confirmed
+  vulnerabilities_fixed: 4       
   residual_risks: 1              # missing TLS 1.3
   red_team_scenarios_run: 5
 
@@ -44,12 +44,12 @@ ai_usage:
   used_for_red_team: true
 
 checklist:
-  report_with_screenshots: false
-  security_audit_in_report: false
-  ux_review_in_report: false
-  agentic_reflection_in_report: false
-  slides_submitted: false
-  presentation_video_submitted: false
+  report_with_screenshots: true
+  security_audit_in_report: true
+  ux_review_in_report: true
+  agentic_reflection_in_report: true
+  slides_submitted: true
+  presentation_video_submitted: true
   audit_instructions_in_src: true
-  dependency_scan_included: false
-  ai_usage_transcripts: false
+  dependency_scan_included: true
+  ai_usage_transcripts: true

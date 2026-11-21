@@ -217,7 +217,7 @@ python -m unittest tests.test_security_audit.SecurityAuditTests.test_logout_sess
 
 2. The test creates a temporary database and logs in as Alice using valid credentials. SMTP email delivery is mocked to avoid requiring external email configuration.
 
-3. The test completes 2FA using the demo verification code 666 and obtains a server-generated session token
+3. The test reads the server-generated 2FA code, completes verification, and obtains a server-generated session token
 
 4. The test logs out using the valid session token
 
@@ -279,7 +279,7 @@ Review the latest source code of our Encrypted Messenger project and identify po
 | 2 | Session Impersonation | Authorization | Yes | Defended | No fix required |
 | 3 | Brute-Force Login | Rate Limiting | Yes | Defended | No fix required |
 | 4 | Message Tampering | Integrity | Yes | Defended | No fix required |
-| 5 | Logout Session Replay | Session Management | Yes | Defended | No fix required |
+| 5 | Session Replay | Session Management | Yes | Defended | No fix required |
 
 ---
 
