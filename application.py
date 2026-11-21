@@ -618,6 +618,7 @@ class MessengerApp:
                     self.contact_exchange_keys[sender],
                     context=f"messenger:{session_id}".encode("utf-8"),
                 )
+                self.message_keys[sender] = key
                 counter = envelope["counter"]
                 if current_session != session_id:
                     if current_session is not None:

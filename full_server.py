@@ -281,20 +281,20 @@ class FullServer(BaseServer):
 			self._log_event(username, "2fa", False, "too many attempts")
 			return self._response(401, "Too many verification attempts")
 		session["two_factor_attempts"] += 1
-		if request['code'] == '666': # DEBUG BYPASS
-			session["authenticated"] = True
-			session.pop("two_factor_code", None)
-			session["session_token"] = generate_session_token()
-			session["session_expires_at"] = time.time() + SESSION_TTL_SECONDS
-			session["reauth_token"] = generate_session_token()
-			self._log_event(username, "2fa", True, "bypass code used")
-			return self._response(
-				200,
-				"Verified",
-				session_token=session["session_token"],
-				expires_at=session["session_expires_at"],
-				reauth_token=session["reauth_token"],
-			)
+		# if request['code'] == '666': # DEBUG BYPASS
+		# 	session["authenticated"] = True
+		# 	session.pop("two_factor_code", None)
+		# 	session["session_token"] = generate_session_token()
+		# 	session["session_expires_at"] = time.time() + SESSION_TTL_SECONDS
+		# 	session["reauth_token"] = generate_session_token()
+		# 	self._log_event(username, "2fa", True, "bypass code used")
+		# 	return self._response(
+		# 		200,
+		# 		"Verified",
+		# 		session_token=session["session_token"],
+		# 		expires_at=session["session_expires_at"],
+		# 		reauth_token=session["reauth_token"],
+		# 	)
 		if not hmac.compare_digest(request["code"], session["two_factor_code"]):
 			self._log_event(username, "2fa", False, "invalid code")
 			return self._response(401, "Verification failed")
