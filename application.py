@@ -443,9 +443,7 @@ class MessengerApp:
             "type": "register", "username": username, "password": password, "email": email
         })
         resp = self.client._forward(self.client.router_addr, payload)
-        resp_obj = self._decode_payload(resp)
-        status_code = resp_obj.get("status_code")
-        return status_code == 200
+        return self._decode_payload(resp)
 
     def _do_login(self, username, password):
         """
@@ -516,7 +514,6 @@ class MessengerApp:
         self.contact_key_fingerprints[contact] = fingerprint
         self.contact_exchange_keys[contact] = exchange_key
         self.contact_identity_keys[contact] = identity_key
-        self.message_keys[contact] = derive_message_key(self.exchange_private_key, exchange_key)
         return True
 
     def _do_initiate_session(self, contact):
