@@ -151,15 +151,8 @@ class FullServer(BaseServer):
 				return
 			self.users = {}
 			for username, password, email, is_admin, exchange_public_key, identity_public_key in rows:
-				stored_password = password
-				if not password.startswith("$argon2"):
-					stored_password = hash_password(password)
-					connection.execute(
-						"UPDATE users SET password = ? WHERE username = ?",
-						(stored_password, username),
-					)
 				self.users[username] = {
-					"password": stored_password,
+					"password": password,
 					"email": email,
 					"is_admin": bool(is_admin),
 					"exchange_public_key": exchange_public_key,

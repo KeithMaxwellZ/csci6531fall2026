@@ -4,7 +4,7 @@ import base64
 import hashlib
 import hmac
 import secrets
-from typing import Optional, Tuple
+from typing import Tuple
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, rsa, padding, x25
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-PASSWORD_ITERATIONS = 600_000
 KEY_SIZE = 32
 PASSWORD_HASHER = PasswordHasher(
     time_cost=3,
@@ -25,45 +24,19 @@ PASSWORD_HASHER = PasswordHasher(
 )
 
 
-def hash_password(password: str, salt: Optional[bytes] = None) -> str:
+def hash_password(password: str) -> str:
     """Return a salted Argon2id password record."""
-    if salt is not None:
-        return _hash_password_with_legacy_salt(password, salt)
     return PASSWORD_HASHER.hash(password)
 
 
-def _hash_password_with_legacy_salt(password: str, salt: bytes) -> str:
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS
-    )
-    return "$".join(
-        (
-            "pbkdf2_sha256",
-            str(PASSWORD_ITERATIONS),
-            _encode(salt),
-            _encode(digest),
-        )
-    )
-
-
 def verify_password(password: str, password_record: str) -> bool:
-    """Verify Argon2id records and legacy PBKDF2 records."""
-    if password_record.startswith("$argon2"):
-        try:
-            return PASSWORD_HASHER.verify(password_record, password)
-        except (VerificationError, InvalidHashError, VerifyMismatchError):
-            return False
-    try:
-        algorithm, iterations, salt_text, digest_text = password_record.split("$", 3)
-        if algorithm != "pbkdf2_sha256":
-            return False
-        expected = _decode(digest_text)
-        actual = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), _decode(salt_text), int(iterations)
-        )
-    except (InvalidSignature, TypeError, ValueError):
+    """Verify an Argon2id password record."""
+    if not password_record.startswith("$argon2"):
         return False
-    return hmac.compare_digest(actual, expected)
+    try:
+        return PASSWORD_HASHER.verify(password_record, password)
+    except (VerificationError, InvalidHashError, VerifyMismatchError):
+        return False
 
 
 def generate_rsa_identity_key_pair() -> Tuple[bytes, bytes]:

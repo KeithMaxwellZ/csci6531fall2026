@@ -523,6 +523,9 @@ class MessengerApp:
         """
         Initiate a secure session with a contact. This would involve key exchange and session establishment.
         """
+        if self.chat_sessions.get(contact) and self.message_keys.get(contact):
+            self.session_contacts.add(contact)
+            return True
         payload = self._create_payload({"type": "initiate_session", "contact": contact, "username": self.username, "session_token": self.session_token})
         resp = self.client._forward(self.client.router_addr, payload)
         resp_obj = self._decode_payload(resp)
@@ -618,6 +621,17 @@ class MessengerApp:
                     context=f"messenger:{session_id}".encode("utf-8"),
                 )
                 counter = envelope["counter"]
+                if current_session != session_id:
+                    if current_session is not None:
+                        self.chat_session_history.setdefault(sender, set()).add(current_session)
+                    self.chat_sessions[sender] = session_id
+                    self.incoming_counters[sender] = 0
+                    self.outgoing_counters[sender] = 0
+                    self.message_keys[sender] = derive_message_key(
+                        self.exchange_private_key,
+                        self.contact_exchange_keys[sender],
+                        context=f"messenger:{session_id}".encode("utf-8"),
+                    )
                 if counter <= self.incoming_counters.get(sender, 0):
                     return None
                 nonce = base64.b64decode(envelope["nonce"])
@@ -631,12 +645,7 @@ class MessengerApp:
                 }, sort_keys=True).encode("utf-8")
                 if not rsa_verify(identity_key, associated_data + nonce + ciphertext, signature):
                     return None
-                plaintext = decrypt_message(ciphertext, nonce, key, associated_data)
-                if current_session != session_id:
-                    if current_session is not None:
-                        self.chat_session_history.setdefault(sender, set()).add(current_session)
-                    self.chat_sessions[sender] = session_id
-                    self.incoming_counters[sender] = 0
+                plaintext = decrypt_message(ciphertext, nonce, self.message_keys[sender], associated_data)
                 self.incoming_counters[sender] = counter
                 return (sender, plaintext.decode("utf-8"))
             except (KeyError, TypeError, ValueError, json.JSONDecodeError, CryptoError):
