@@ -1,0 +1,263 @@
+Milestone 3 Final Report
+The report is the primary graded artifact. It should be 12–18 pages (excluding appendices) and structured with the following sections. Use clear numbered section headings — they are used to locate content during AI-assisted review.
+1. Product Overview
+What does the application do, and who is it for?
+Which security properties does it implement, and what does each protect?
+Screenshots of the primary user interface, annotated to explain what is happening and what security mechanism is in play.
+2. Architecture and Implementation
+Final architecture diagram with components, data flows, and trust boundaries.
+Description of the key implementation decisions: technology stack, libraries used for security-critical operations, and why.
+How does each security property map to specific code components?
+3. Security Audit
+Document the red-team evaluation your team conducted.
+For each attack scenario from your Milestone 2 audit plan: what you tested, what happened, and how you responded (fixed, mitigated, accepted with justification).
+Include at least five scenarios total across your security properties.
+Summarize residual risks — what is still potentially exploitable and why you accepted that risk.
+4. UX and Documentation Review
+Interface review: are security-relevant actions clearly communicated? Are error messages safe (informative but not leaking internal state)?
+CLI review (if applicable): is --help complete? Are exit codes documented?
+Documentation review: can a new person set up and run your application following SETUP.md alone?
+5. Agentic Coding Reflection
+How did AI tools shape your development process across the full project?
+What did the AI get right and what did it get wrong?
+Were there specific security-critical sections where AI output required significant correction? What was the nature of those corrections?
+If you were to do this again, what would you do differently with respect to AI tooling?
+6. Known Limitations and Future Work
+What does your application not protect against, and why?
+What would you implement with more time?
+Encrypted Messenger: App Report
+Product Overview
+Purpose and audience
+Encrypted Messenger is a Python desktop app for private one-to-one messaging over a small relay network. Users create an account, sign in with a password and email-based two-factor verification, choose a contact, and send messages from the chat workspace.
+The app is aimed at authenticated users who need confidential messaging in a local or academic deployment. It also includes an administrator view for monitoring service health without displaying message content.
+The system has three main parts: a Tkinter desktop client, a relay/router, and a central server. The server manages accounts, sessions, contacts, public keys, audit events, and message delivery.
+Security properties
+Here’s a list of security properties we implemented.
+Password protection: Passwords are stored as salted Argon2id records through argon2-cffi, so the database does not contain plaintext passwords. Legacy PBKDF2 records are recognized and upgraded when the server loads them.
+Authentication: Users must provide a password and a six-digit code sent by email. The code expires after five minutes and is limited to five attempts.
+Login abuse resistance: The server locks a username for 30 seconds after three failed password attempts. The client also applies a local lockout, and 2FA attempts are capped at five.
+Session security: After 2FA, the server issues a random session token with a 24-hour expiry. Tokens are compared in constant time and removed when the user logs out.
+Authorization: Protected requests require an authenticated session. Messages can only be sent to contacts with an established relationship.
+Message confidentiality: The client derives a session key with X25519 and HKDF, then encrypts messages with XChaCha20-Poly1305. Routers and the central server forward the encrypted envelope without reading the plaintext.
+Message integrity and authenticity: The sender signs the message metadata, nonce, and ciphertext with an RSA identity key. The recipient verifies the signature before decrypting the message.
+Replay resistance: Each message includes a signed and authenticated counter. The recipient rejects repeated or older counters and messages from old chat sessions.
+Key continuity: The client fingerprints a contact’s exchange and identity public keys. A later key change is detected and rejected.
+
+
+Primary User Interface
+The login and registration screens collect the account details, email address, and router address. After the password is accepted, the login flow asks for the email verification code. The chat view includes contacts, unread indicators, a transcript, message entry, and logout. The administrator screen shows relay health and security status, although some displayed values are still demonstration data.
+
+Image 1. Encrypted Messenger login screen
+The main chat screen shows the signed-in username, online status, contacts, Refresh, verified-contact labels, the conversation transcript, message box, Send button, and Log out control. These elements represent the session-protected chat workflow: public-key checks support the verified labels, and messages are encrypted and signed before forwarding.
+
+Image 2. Encrypted Messenger chat screen
+
+Architecture and Implementation
+Architecture and Data Flow
+The client-to-router, router-to-server, server-to-router, and router-to-recipient links are network trust boundaries. The database is a separate persistence boundary. In this project’s threat model, route values and router addresses are trusted simulation infrastructure, while payload contents and user-entered fields are treated as attacker-controlled.
+
+Figure 1. Architecture, data flow, and trust boundaries
+
+Figure 2. Message Delivering Flow
+
+
+Trust boundaries
+The project threat model treats route values and router addresses as trusted simulation infrastructure, while treating HTTP input, payload bodies, inner JSON, user fields, and message contents as attacker-controlled.
+Boundary
+Data crossing it
+Main risk or assumption
+User to desktop client
+Passwords, 2FA code, contact selection, plaintext message text
+Local compromise can expose input and in-memory keys.
+Client to router
+Payloads containing credentials, tokens, requests, and encrypted message envelopes
+Current transport uses HTTP. Router logging can expose request data.
+Router to central server
+Registration, authentication, contact, key, and message requests
+The router forwards data; the server must authenticate and authorize requests.
+Server to recipient router/client
+Forwarded message envelopes and sender metadata
+Delivery and routing must be correct; the envelope is designed to remain confidential to the clients.
+Server to SQLite
+Password records, account metadata, contacts, public keys, and audit events
+Database access exposes persistent account and metadata; private message plaintext is not intentionally stored.
+
+Implementation Decisions
+
+Technology stack
+
+Python standard libraries: Tkinter for the desktop UI; http.server and ThreadingHTTPServer for local HTTP nodes; urllib.request for forwarding; SQLite for persistence; json for the application protocol; smtplib for email 2FA; and threads for node execution.
+argon2-cffi: provides salted, memory-hard Argon2id password hashing with a configured PasswordHasher.
+ cryptography: provides RSA identity keys and signatures, X25519 key exchange, HKDF key derivation, Ed25519 helper functions, serialization, and signature verification.
+PyNaCl: provides the XChaCha20-Poly1305 AEAD primitive used for message confidentiality and tamper detection.
+SQLite: provides a lightweight local database for user accounts, contacts, public keys, and audit logs.
+
+Key decisions and rationale
+
+Client-side message protection. MessengerApp encrypts and signs messages before they leave the client. The server and routers therefore do not need the plaintext or the per-contact message key.
+Authenticated encryption. XChaCha20-Poly1305 protects confidentiality and detects changes to the ciphertext or associated data. A fresh nonce is generated for every message.
+Session-specific key derivation. X25519 creates a shared secret, and HKDF turns it into a 32-byte key using a session-specific context. Different chat sessions produce different keys.
+Separate identity signatures. RSA signatures bind the sender’s identity to the message envelope. The recipient verifies the signature before decrypting.
+Explicit freshness state. Each message includes a contact-specific counter and session ID in its authenticated data and signature. The recipient remembers the highest accepted counter and rejects older or repeated messages.
+Server-side session enforcement. FullServer._authenticate protects the server-side operations, so security does not depend only on the UI. Session tokens are random and compared with hmac.compare_digest.
+Persistent audit trail. Registration, login, 2FA, and logout events are written to SQLite, allowing account activity to survive a server restart.
+
+Security Property to Code Mapping
+Security property
+Main code components
+Enforcement or evidence
+Password protection
+crypto_utils.py:hash_password, crypto_utils.py:verify_password
+Argon2id records are salted and non-plaintext; legacy PBKDF2 records are supported and upgraded.
+Password authentication
+FullServer._login, application.py:_handle_login
+Password verification occurs before 2FA is sent. Failed logins are counted and temporarily locked.
+Email 2FA
+FullServer._send_2fa_code, FullServer._verify_2fa
+Codes are random six-digit values, expire after five minutes, and are limited to five attempts.
+Session security
+FullServer._authenticate, FullServer._logout
+Token comparison, expiry checks, and logout revocation protect session use.
+Authorization
+FullServer.on_receive, FullServer._send_message
+Protected request types require authentication; messages require a known contact relationship.
+Key publication and retrieval
+MessengerApp._fetch_contact_keys, FullServer._fetch_keys
+Public keys are fetched through authenticated operations, and client fingerprints detect a changed key pair.
+Message key agreement
+crypto_utils.py:derive_message_key, MessengerApp._do_initiate_session
+X25519 plus HKDF derives a contact/session-specific 32-byte key.
+Message confidentiality 
+crypto_utils.py:encrypt_message, crypto_utils.py:decrypt_message
+XChaCha20-Poly1305 encrypts plaintext and authenticates associated data.
+Message authenticity
+crypto_utils.py:rsa_sign, crypto_utils.py:rsa_verify
+The sender signs the message envelope, and the recipient rejects an invalid signature.
+Replay resistance
+MessengerApp._do_send_message, MessengerApp._on_receive_message
+Signed counters and session identifiers allow the recipient to reject stale or repeated messages.
+Persistence and auditability
+FullServer._initialize_database, FullServer._log_event
+SQLite persists accounts, contacts, keys, and audit records.
+Payload routing
+router.py:BaseRouter, server.py:BaseServer
+Routers inspect and forward payloads, while the server resolves message destinations.
+
+
+Security Audit
+
+Audit Methodology
+
+The security audit of our Encrypted Messenger focused on testing how the application handles common security attacks and identifying potential vulnerabilities. We tested five security properties: authentication, authorization, rate limiting, message integrity, and session management.
+
+We conducted the red-team assessment using Python’s unittest framework, designing five attack scenarios to evaluate how the application responds to unauthorized requests, session impersonation, repeated failed login attempts, message tampering, and session replay after logout.
+
+We tested server request handlers or cryptographic functions directly, rather than the complete GUI and network communication flow. Server tests were isolated using a temporary database, and SMTP email delivery was mocked in the post-logout session replay test. We recorded the actual outcomes and compared them against the expected results to determine whether mitigation was required.
+
+Attack Scenarios and Results
+
+We executed five attack scenarios to evaluate different security properties of Encrypted Messenger. The following subsections describe each attack scenario, including what we tested, the observed results, and our response. 
+
+Scenario 1: Unauthorized Message Sending
+
+This test evaluated whether an unauthenticated user could send a message without a valid session. We submitted a message request directly to the server handler without providing authentication credentials. The server rejected the request with status code 401 and the message “Authentication required”. This result showed that authentication was enforced in the tested message handler. No mitigation was required because the actual result matched the expected result and the unauthorized request was successfully blocked.
+
+Scenario 2: Session Impersonation
+
+This test examined whether a user could impersonate another user by submitting a mismatched username and session token. We simulated an authenticated session for Alice and attempted to send a message while claiming to be Bob using Alice’s session token. The server rejected the request with status code 401. The result demonstrated that the tested handler rejected this session identity mismatch. No mitigation was required for this tested scenario.
+
+
+
+
+Scenario 3: Brute-Force Login
+
+This test evaluated the application’s rate-limiting mechanism against repeated incorrect login attempts. We submitted four consecutive login requests using Alice’s username and an incorrect password. The first three attempts returned status code 401, while the fourth attempt returned 429 with the message “Too many login attempts”. This demonstrated that the server activated its temporary login lockout mechanism after three failed attempts. Since the actual result matched the expected result, no additional mitigation was required based on this test.
+
+Scenario 4: Message Tampering
+
+This test evaluated whether the application’s authenticated encryption functions could detect modifications to an encrypted message. We encrypted a sample message using XChaCha20-Poly1305 and confirmed that the original ciphertext could be decrypted successfully. We then modified one bit of the ciphertext and attempted to decrypt it again. The decryption function rejected the modified ciphertext by raising a cryptographic error. This demonstrated that ciphertext integrity was protected in the tested cryptographic operation. No mitigation was required for this test.
+
+Scenario 5: Logout Session Replay
+
+This test evaluated whether a session token could still be used after logout. We logged in as Alice, completed the demonstration 2FA process, and obtained a valid session token. SMTP email delivery was mocked during this test. After logging out, we attempted to send a message using the same token. The logout request returned status code 200, and the replayed request was rejected with status code 401 and the message “Authentication required”. This confirmed that the server invalidated the session token after logout in the tested request flow. No mitigation was required for this scenario.
+
+Residual Risks
+
+Although all five security tests passed, some security risks remain in the application. The first risk is the lack of TLS 1.3. The application currently uses HTTP for local testing and demos. Because the application is used locally, we have temporarily accepted this limitation. However, TLS should be implemented before deploying the application over untrusted connections
+
+UX and Documentation Review.
+Interface Review
+The Encrypted Messenger interface communicates security-sensitive outcomes with clear, user-readable feedback while avoiding unnecessary disclosure of account or system details.
+ After three failed password attempts, the login UI shows a lockout warning and reports a 30-second timeout before another attempt can be made.
+Successful account registration produces an explicit success confirmation.
+A failed message delivery attempt produces a warning. The message is removed from the optimistic transcript instead of being displayed as successfully sent.
+Login, 2FA, missing-field, authentication, and malformed-request failures use generic pop-up messages. These messages provide useful feedback without exposing personal information or internal server details.
+Invalid login credentials are consistently reported as “Invalid username or password.” This prevents an attacker from learning whether a guessed username exists.
+Authentication and protected operations require server-side session tokens. The interface provides feedback and workflow controls, but it does not act as the security boundary.
+
+Error Message Safety
+Visible error messages are safe. Login uses one generic message for unknown users and wrong passwords, and no token, code or hash ever appears in an error. When an error occurs, it demonstrates exactly the reason/cause of the error.
+Examples 1: Invalid password
+
+Image 3. Pop up for invalid password
+Examples 2: Invalid 2FA code 
+
+Image 4. Pop up for invalid 2FA code
+CLI Review
+Doesn’t apply.
+Documentation Review
+A new person can generally set up and run the application using README.md alone, because it clearly lists the Windows/Python requirements, dependency installation command, and launch command. The steps are concise and include both source and executable setup paths.
+
+
+
+Agentic Coding Reflection
+
+AI tools were reliable at producing individual cryptographic primitives and unreliable at the protocol logic connecting them: state, ordering, trust and honest UI text. Most serious defects in this report sit in that connecting layer.
+Impact on the Development Process
+AI assistants ([name the tools used]) were used throughout: scaffolding the Tkinter interface, writing server handlers, generating crypto_utils.py, and designing the encrypted message envelope. The main effect was speed, since a complete-looking feature could be built in one session. The cost was that code arrived faster than it could be reviewed. Features were often generated as whole files rather than small diffs, and the mixed indentation in full_server.py is a visible trace of pasted AI output.
+What the AI Got Right and Wrong
+Right: the AI consistently chose sound primitives and used them correctly in isolation: Argon2id hashing, secrets for codes and tokens, hmac.compare_digest, XChaCha20-Poly1305 with random nonces, associated data binding sender, target, session and counter, RSA-PSS signatures, and parameterised SQL.
+Wrong: errors were in integration and in claims.
+Area
+Problem
+UI text
+Sometimes it will come up with unnecessary UI text elements to describe some features
+Dead code
+During the iteration of UI elements, it keeps producing outdated or unreachable codes without cleaning it up
+Over interpretation 
+In implementing some features, it over estimated the potential issues and added too many preventive checks
+
+Security-Critical Corrections
+In each case below, the AI's output looked complete and passed a happy-path test, which made the defect easy to miss.
+Login and 2FA ordering. Session and delivery address were committed before the second factor was checked. The error was in sequencing, not in any single step.
+Key trust. A fingerprint comparison was implemented without the persistence, display and warning that make it meaningful: an incomplete mechanism presented as complete.
+Password migration. The re-hashing bug would corrupt every legacy credential. The correct approach is to verify PBKDF2 records as-is and upgrade to Argon2id at next login, when the plaintext is available.
+Errors and debug paths. Raw exceptions reached users and the 2FA bypass remained active. The AI optimised for debuggability because it was never told the code was security-sensitive.
+What I Would Do Differently
+These are some aspects we think we could improve.
+Specify first. Provides a standard guideline for different agents so that everyone (including human and agents,) have the same level of knowledge
+Generate adversarial tests with each feature: malformed JSON, replays, changed keys and out-of-order requests.
+Work in small diffs rather than regenerated files, so unrelated changes are visible.
+
+6. Known Limitations and Future Work
+
+Known Limitations
+
+The application provides useful protections for a local demonstration, but it does not provide complete protection against every realistic deployment threat. The most important limitation is that the current network transport uses HTTP rather than TLS. Message contents are protected by client-side encryption, but credentials, session tokens, 2FA requests, routing information, and other metadata can still be observed or modified by an attacker who can monitor the network. A malicious router or network attacker could also disrupt delivery, replay requests, or perform denial-of-service attacks. TLS should therefore be required before the application is used across an untrusted network.
+
+The threat model also assumes that the desktop client and the local infrastructure are not already compromised. An attacker with access to a user's computer could capture passwords and 2FA codes, read plaintext while it is displayed, or extract private keys and message keys from memory. Encryption cannot protect information after it has been decrypted for the user. Similarly, the current router and server design does not attempt to hide communication metadata such as usernames, timing, message size, delivery relationships, or online status. The server can route encrypted messages without reading their plaintext, but it can still learn this metadata.
+
+Key continuity is only as strong as the initial key verification and the user's response to a warning. A changed public key can be detected, but the project does not yet provide a mature out-of-band verification workflow, key rotation protocol, backup and recovery process, or protection against a compromised account publishing a replacement key. Losing a private key can make prior or future messages inaccessible, while compromising it can allow an attacker to impersonate the user until the key is revoked.
+
+The implementation is also intended for a small academic deployment rather than a production-scale service. It has limited availability protections, no redundant servers, and no comprehensive monitoring or alerting. The administrator view includes demonstration values, and the application has not been evaluated through a full multi-client, hostile-network, or large-scale performance test. Finally, the audit covered five focused scenarios and cryptographic operations directly; it does not prove that every malformed request, concurrency issue, dependency vulnerability, or GUI workflow is secure.
+
+Future Work
+
+With more time, the first priority would be to replace HTTP with TLS 1.3 and validate certificates or otherwise provision trusted server identities. Transport security should cover every client-router and router-server connection, with secure cookie or token handling and removal of sensitive data from logs. The deployment would also need a documented production configuration that separates development shortcuts, demonstration 2FA behavior, and real email delivery.
+
+The next priority would be a complete key-management lifecycle. This would include an explicit contact-verification screen, persistent fingerprints with clear change warnings, key rotation and revocation, secure backup and recovery procedures, and a defined response when a device is lost or compromised. The protocol should also be reviewed for forward secrecy and offline-message behavior so that compromise of a current key does not expose more history than necessary.
+
+Additional work should harden the service boundary and improve operational resilience. Planned improvements include stricter request schemas, bounded request sizes, safer concurrency and transaction handling, stronger abuse controls, audit-log review and alerting, and authenticated administrator operations. Automated tests should be expanded to cover malformed JSON, forged signatures, changed associated data, replayed and out-of-order counters, changed contact keys, concurrent logins, expired sessions, database failures, and complete end-to-end network flows. Dependency scanning, static analysis, and an independent penetration test would provide further assurance.
+
+Finally, the user experience and documentation should be completed for real deployment. Security warnings should explain what users must verify without exposing internal state, the administrator screen should display only measured service values, and setup documentation should describe TLS certificates, email configuration, key recovery, backups, and incident response. These changes would move the application from a security-focused academic prototype toward a system that could be responsibly operated outside a controlled local environment.
+

@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <rect width="1200" height="720" fill="#ffffff"/>
+  <style>
+    .boundary { fill: none; stroke: #667085; stroke-width: 2; stroke-dasharray: 8 6; }
+    .box { fill: #e8f1f5; stroke: #183b4b; stroke-width: 2; rx: 8; }
+    .store { fill: #fff3d6; stroke: #8a5a00; stroke-width: 2; }
+    .label { font: 18px Arial, sans-serif; fill: #17212b; }
+    .small { font: 15px Arial, sans-serif; fill: #344054; }
+    .boundary-label { font: bold 16px Arial, sans-serif; fill: #475467; }
+    .arrow { stroke: #344054; stroke-width: 2.5; fill: none; marker-end: url(#arrowhead); }
+    .dashed { stroke-dasharray: 7 5; }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#344054"/>
+    </marker>
+  </defs>
+
+  <text x="600" y="38" text-anchor="middle" class="label" font-weight="bold">Encrypted Messenger Architecture</text>
+
+  <rect x="25" y="65" width="280" height="590" class="boundary"/>
+  <text x="40" y="92" class="boundary-label">CLIENT TRUST BOUNDARY</text>
+  <rect x="55" y="135" width="220" height="105" class="box"/>
+  <text x="165" y="170" text-anchor="middle" class="label">Alice desktop</text>
+  <text x="165" y="198" text-anchor="middle" class="small">application.py</text>
+  <text x="165" y="222" text-anchor="middle" class="small">in-memory keys</text>
+  <rect x="55" y="380" width="220" height="105" class="box"/>
+  <text x="165" y="415" text-anchor="middle" class="label">Bob desktop</text>
+  <text x="165" y="443" text-anchor="middle" class="small">application.py</text>
+  <text x="165" y="467" text-anchor="middle" class="small">in-memory keys</text>
+
+  <rect x="350" y="65" width="275" height="590" class="boundary"/>
+  <text x="365" y="92" class="boundary-label">RELAY / NETWORK BOUNDARY</text>
+  <rect x="390" y="135" width="195" height="105" class="box"/>
+  <text x="487" y="170" text-anchor="middle" class="label">Router A</text>
+  <text x="487" y="198" text-anchor="middle" class="small">BaseRouter</text>
+  <text x="487" y="222" text-anchor="middle" class="small">router.py</text>
+  <rect x="390" y="380" width="195" height="105" class="box"/>
+  <text x="487" y="415" text-anchor="middle" class="label">Router B</text>
+  <text x="487" y="443" text-anchor="middle" class="small">BaseRouter</text>
+  <text x="487" y="467" text-anchor="middle" class="small">router.py</text>
+
+  <rect x="670" y="65" width="500" height="590" class="boundary"/>
+  <text x="685" y="92" class="boundary-label">CENTRAL SERVER TRUST BOUNDARY</text>
+  <rect x="730" y="135" width="380" height="145" class="box"/>
+  <text x="920" y="175" text-anchor="middle" class="label">FullServer</text>
+  <text x="920" y="203" text-anchor="middle" class="small">authentication, contacts, keys</text>
+  <text x="920" y="229" text-anchor="middle" class="small">message authorization and forwarding</text>
+  <rect x="790" y="430" width="260" height="105" class="store"/>
+  <text x="920" y="468" text-anchor="middle" class="label">SQLite</text>
+  <text x="920" y="496" text-anchor="middle" class="small">users, keys, contacts, audit logs</text>
+
+  <path d="M275 187 L390 187" class="arrow"/>
+  <path d="M585 187 L730 187" class="arrow"/>
+  <path d="M730 237 L585 432" class="arrow"/>
+  <path d="M390 432 L275 432" class="arrow"/>
+  <path d="M920 280 L920 430" class="arrow dashed"/>
+  <text x="332" y="175" text-anchor="middle" class="small">JSON requests</text>
+  <text x="657" y="175" text-anchor="middle" class="small">forwarded payload</text>
+  <text x="650" y="365" text-anchor="middle" class="small">encrypted, signed envelope</text>
+  <text x="325" y="420" text-anchor="middle" class="small">delivery</text>
+  <text x="945" y="355" class="small">audit and public keys</text>
+
+  <text x="600" y="690" text-anchor="middle" class="small">The server authorizes and forwards the envelope; the recipient verifies and decrypts it locally.</text>
+</svg>

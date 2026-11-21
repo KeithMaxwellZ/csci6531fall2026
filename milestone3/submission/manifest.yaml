@@ -1,0 +1,55 @@
+# ============================================================
+# Milestone 3 Manifest — CSCI 4531/6531 Project
+# Rename this ZIP to: lastname1-lastname2-lastname3.m3.zip before submitting
+# ============================================================
+
+milestone: 3
+
+team:
+  - name: "Keith Zhang"
+    gwid: "G24820049"
+    email: "keith.zhang@gwmail.gwu.edu"
+    role: architect
+  - name: "Zihan Yang"
+    gwid: "G36877090"
+    email: "zihany@gwu.edu"
+    role: engineer
+  - name: "Waylon Tan"
+    gwid: "G42744864"
+    email: "g42744864@gwu.edu"
+    role: auditor
+
+application:
+  name: "Encrypted Messenger"
+  security_properties_implemented:
+    - encryption
+    - accounts
+    - audit_log
+
+submission:
+  report_page_count: 0           # fill in actual page count
+  slides_page_count: 0
+  presentation_video_url: "https://youtube.com/..."
+
+security_audit:
+  vulnerabilities_found: 0       # five scenarios were defended; no vulnerability was confirmed
+  vulnerabilities_fixed: 0       # no vulnerability required a fix
+  residual_risks: 1              # missing TLS 1.3
+  red_team_scenarios_run: 5
+
+ai_usage:
+  tools_used:
+    - chatgpt
+    - claude
+  used_for_red_team: true
+
+checklist:
+  report_with_screenshots: false
+  security_audit_in_report: false
+  ux_review_in_report: false
+  agentic_reflection_in_report: false
+  slides_submitted: false
+  presentation_video_submitted: false
+  audit_instructions_in_src: true
+  dependency_scan_included: false
+  ai_usage_transcripts: false
